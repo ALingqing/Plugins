@@ -138,7 +138,7 @@ Metro/Railway 各自保留同名 `org.cubexmc.metro.gui.ItemBuilder` 作为**薄
 抽取前已核对 Metro 与 Railway 两侧内容**逐字节一致**（仅换行符不同）。
 按既定纪律**只下沉无状态空间索引**，`StopManager`/`Stop` 留在插件内。
 
-### 2.10 `cubex-economy` — 2/12（StateCharge · RuleGems）· 2026-08-21 新建
+### 2.10 `cubex-economy` — 6/12（StateCharge · RuleGems · MountLicense · Metro · Railway · EcoBalancer）· 2026-08-21 新建
 
 `VaultEconomy`（`has`/`balance`/`withdraw`/`deposit`/`charge`/`format` + `useAccount` 入账路由）·
 `EconomyAccount`（`economy.account` 的纯解析：空 / `uuid:<uuid>` / 裸 UUID / `<玩家名>` / `bank:<名字>`）·
@@ -152,12 +152,12 @@ Metro/Railway 各自保留同名 `org.cubexmc.metro.gui.ItemBuilder` 作为**薄
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | BookLite | ✅ | ✅ | ✅ | — | — | ✅ | — | — | — | — |
 | FAWEReplacer | ✅ | ✅ | ✅ | — | — | — | ✅ | — | — | — |
-| MountLicense | ✅ | ✅ | ✅ | — | — | — | — | — | — | — |
+| MountLicense | ✅ | ✅ | ✅ | — | — | — | — | — | — | ✅ |
 | Contract | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ | — | — |
-| EcoBalancer | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | — | — |
+| EcoBalancer | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | — | ✅ |
 | RuleGems | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | ✅ |
-| Metro | ✅ | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | — |
-| Railway | ✅ | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | — |
+| Metro | ✅ | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | ✅ |
+| Railway | ✅ | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | ✅ |
 | Regions | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ | — | — |
 | StateCharge | ✅ | ✅ | ✅ | ✅ | — | — | — | — | — | ✅ |
 | Clarity | ✅ | — | — | — | — | — | — | — | — | — |
@@ -838,12 +838,42 @@ MountLicense / StateCharge 直接 `withdrawPlayer` 后蒸发。除 EcoBalancer �
       （名字解析要查 usercache/存档，不能落进每分钟一次的结算里）
 - [x] **RuleGems 包名撞车已消除（2026-08-27）**：删除本地 EconomyProvider/ItemBuilder；
       GUI 业务类移到 `org.cubexmc.rulegems.gui`。仍采用 EMBEDDED，不切外置模式。
-- [ ] **其余消费方迁移**（每个都是独立提交，不要和玩法改动混在一起）：
-      - [ ] **MountLicense**：最简单，一处 `withdraw`，与 StateCharge 同形
-      - [ ] **Metro / Railway**：现有"有 owner 转 owner"的行为要保留，`economy.account` 只接管 owner 缺席的分支
+- [ ] **其余消费方迁移**（每个都是独立提交，不要和玩法改动混在一起）—— **2026-09-09 后只剩 Contract 一家，而它是被 §4 R1 卡住的，不是排期问题**：
+      - [x] **MountLicense（2026-09-09）**：删掉反射实现的 `integration/EconomyHook.kt`，
+            注册费改走 `VaultEconomy.charge()`；config v2→3 加 `economy.account`（`EconomyAccountStep`，3 条单测）。
+            与 StateCharge 的**一处不同**：缺 Vault 不 `abortEnable` 而是降级成不收费 ——
+            收费在这里是可选玩法（`economy.enabled` / `register_cost: 0`），而按周期扣费的 StateCharge 没经济就无法工作。
+            `economy.enabled` 每次注册现查（reload 立刻生效）；写入失败的退款仍是 `deposit` 给玩家，
+            **不**从 `economy.account` 转回（Vault 无事务），该路径会让服务器账户多出一笔，已在代码里标注对帐线索。
+            `/ml reload` 在没接上经济时会**重试 hook**（旧的 `EconomyHook` 是懒初始化的，天然能接晚注册的 provider；
+            改成 enable 时 hook 后要把这条退路补回来）。
+            RegistryService 新增 3 条单测（余额不足 / 走 charge 而非裸 withdraw + 写入失败退款 / `economy.enabled=false` 不碰经济）
+      - [x] **Metro / Railway（2026-09-09）**：分支已拆开 —— `TicketService.collectFare()` 里
+            **有 owner 走原来的 withdraw + deposit(owner)（行为一字未改，含 Metro 那边的失败退款）**，
+            **无 owner 改走 `VaultIntegration.chargeToAccount()`**（= `VaultEconomy.charge`，扣款+入账一步）。
+            两家各自的 config 加 `economy.account`（Metro v3→4、Railway v2→3，默认空串 = 旧的销毁行为），
+            `applyEconomyAccount()` 在 enable 与 reload 各解析一次（Metro 挂在 `refreshVaultIntegration()` 里，
+            它本来就会重接提供方）。
+            **顺手修掉的迁移陷阱**：两侧都有一个旧 step 把 `toVersion()` 写成 `CONFIG_VERSION` 常量（Metro 的
+            `MetroMidRouteExitFareStep`、Railway 的 `MetroConfigModernizationStep`）—— 常量一涨，那一步就变成
+            "2→4"的跳级，中间版本的新键永远合不进来；现已钉成字面量并用链路单测锁住。
+            新增单测：Metro 4 条（链路、v3→v4 加键不改付费、保留服主已写账户、无/有 owner 两条路径）、
+            Railway 5 条（同形）
       - [x] **RuleGems（2026-08-27）**：`VaultTransfers` 承接独立转账/补偿，
             显式命名账户与可信 UUID 路由；移除全量离线枚举。异常结果要求人工核账，开关仍默认关闭。
-      - [ ] **EcoBalancer**：已能工作，最后再迁，且必须保持 `tax-account` / `tax-account-name` 键兼容
+      - [x] **EcoBalancer（2026-09-09）**：`tax-account` / `tax-account-name` **两个键一字未改**，
+            由新的 [`TaxTreasury`](EcoBalancer/src/main/java/org/cubexmc/ecobalancer/tax/TaxTreasury.kt) 翻译成
+            `EconomyAccount.RawName` / `None`（名字原样进 Vault 的 name 重载，与迁移前的 `depositPlayer(String, Double)` 同一调用）。
+            **主要收获不是去重，是把静默失败挖出来**：原来 `withdrawPlayer` + `depositPlayer` 两次都不看返回值，
+            经济插件拒绝扣款时账本照样记一笔不存在的税（`total_tax_paid` 与 `tax_fund_balance` 一起虚高，且无日志）。
+            现在：扣款失败 → 新枚举值 `ECONOMY_FAILED` + 金额记 0（`recordTax` 只收 > 0，因此不进账本）+ WARNING + `messages.tax.economy_failed`；
+            扣到但没入账 → 仍算玩家已缴（钱确实走了），另记一条 WARNING 供核账。
+            顺手：负余额修复与 `/eb restore` 的退款也改成看返回值；删掉 `VaultUtils` 里无人调用的
+            `setupTaxAccount` / `getTaxAccountBalance` / `depositToTaxAccount` 三个死函数。
+            lang 加 `messages.tax.economy_failed`，lang-version 4→5 用**只合新键**的 `MergeLanguageDefaultsStep`
+            （故意不复用 `ModernizeLanguageStep`：v4 已是 MiniMessage，再跑一遍 legacy 转换会去动服主写的 `&`）。
+            单测：`TaxTreasuryTest` 6 条（拒扣 / null 响应 / 入账失败仍算已缴 / 按名入账 / 关闭税金账户 / 非法账户名）
+            + 迁移套件新增 "v4 文件只合新键、不重写服主文案"
       - [ ] **Contract**：`SYSTEM_SINK` 接入本模块 —— **等 §4 R1 真钱故障注入验证之后再动**
 
 #### 已下沉的其余项（2026-08-19）
@@ -933,7 +963,10 @@ MountLicense / StateCharge 直接 `withdrawPlayer` 后蒸发。除 EcoBalancer �
       的指针**，按 [`CLAUDE.md`](CLAUDE.md) 的先例。三份会漂移的规则副本对 agent 是**反效果**——
       读到互相矛盾的规则比没有规则更糟
 - [ ] 给 `modules/` 的约定插件加 `explicitApi()`。理由不是对外契约（对内不需要），
-      而是**显式返回类型让 agent 少猜**
+      而是**显式返回类型让 agent 少猜**。
+      **排在 Regions 本轮之后（2026-09-09 用户确认）**：实际试开过一次（`kotlin { explicitApi() }`），
+      光 `cubex-core` 一个模块就报几十处 "Visibility must be specified"，十个模块加起来是几百处纯机械的 `public`。
+      这种横扫式大 diff 不能和 Regions 在途的改动撞在一起
 - ❌ ~~`docs/ai-prompts/` few-shot 提示词模板库~~ —— 可编译可测试的 cookbook（§7.3）是更好的
       grounding 数据；提示词模板没有任何机制阻止它腐烂
 

@@ -270,6 +270,40 @@ give @s diamond_pickaxe[minecraft:custom_data={PublicBukkitValues:{"leveltools:l
       - [ ] `bank:<名字>` 且经济插件不支持 bank → SEVERE 并降级，不静默吞钱
       - [ ] 改错的配置修好后 `/sc admin reload` → **不重启**即重新解析成功
       - [ ] 配置没变时连按两次 `/sc admin reload` → 不应重复出现账户解析日志（跳过重解析）
+- [ ] **MountLicense 内循环经济 `economy.account`**（2026-09-09 新增）：
+      与上面 StateCharge 那组同形，只测两者不同的地方，其余写法（uuid/name/bank/写错）不用重测：
+      - [ ] **升级路径**：拿一份 `config-version: 2` 的旧 config 启动 → 自动补出
+            `economy.account: ''`、版本变 3，注册行为与升级前完全一致（钱照旧销毁）
+      - [ ] **不装 Vault 启动** → 插件照常 enable（不是 abortEnable），日志一句
+            "will not charge for registration"，注册免费可用
+      - [ ] `register_cost: 25` + `economy.account: uuid:<cubex_bank>` → 注册一台载具：
+            玩家 -25、该账户 +25（逐笔核对），聊天里仍是 `registration.charged` 那句原文案
+      - [ ] 余额不够 → `fail_economy`，**车牌不消耗**、账户无变动
+      - [ ] 运行中把 `economy.enabled` 改成 false → `/ml reload` 后立刻免费（不需重启）
+      - [ ] **晚注册的经济提供方**：先在无经济插件的服务器启动，再 `/plugman load` 或类似手段上经济插件
+            → `/ml reload` 后能接上（日志出现 "Vault economy hooked"），不需重启
+- [ ] **EcoBalancer 税金路由与失败可见性**（2026-09-09 新增）：
+      配置键没改，重点是"失败不再静默"这一条：
+      - [ ] **升级路径**：拿一份 `lang-version: 4` 且服主改过文案的语言文件启动 → 升到 5、
+            多出 `messages.tax.economy_failed`，**服主改过的句子一字未动**（尤其是正文里带 `&` 的）
+      - [ ] `tax-account: true` + `tax-account-name: tax` → 征税后玩家扣多少、`tax` 账户就涨多少（逐笔核对）
+      - [ ] `tax-account: false` → 税款销毁（旧行为），`/eb tax fund` 与账本仍正常记录
+      - [ ] `/eb tax account name <新名字>` → **不重启**下一次征税就进新账户
+      - [ ] **扣款被拒**（拿一个带只读/锁定账户的玩家，或用只读模式的经济插件）→
+            控制台出 WARNING，`/eb tax stats <player>` 的累计**不增加**，`/eb tax fund` 也不增加
+      - [ ] **扣到但入账失败**（把 `tax-account-name` 改成经济插件拒收的账户）→
+            玩家余额确实减了、账本记了，并且控制台有一条可对账的 WARNING
+      - [ ] `/eb restore <id>` 退款失败时控制台有逐玩家的 WARNING（以前静默）
+- [ ] **Metro / Railway 票款去向 `economy.account`**（2026-09-09 新增）：
+      两个插件**不能同时装**，分两轮跑；重点是"有 owner 的线路一字未改"这一条：
+      - [ ] **升级路径**：旧 config（Metro `config-version: 3` / Railway `2`）启动 → 自动补出
+            `economy.account: ''` 并升到 4 / 3，**其余键一字未改**（尤其是服主改过的默认值）
+      - [ ] **有 owner 的线路**：坐一趟 → 钱进 owner 口袋，`economy.account` 账户**无变动**
+      - [ ] **无 owner 的线路** + 空 `economy.account` → 行为与升级前一致（钱消失），玩家提示不变
+      - [ ] **无 owner 的线路** + `uuid:<cubex_bank>` → 玩家扣多少，该账户就涨多少
+      - [ ] 按里程/区间计价的线路中途下车（`economy.mid_route_exit_fare`）→ 补收的那一笔走同一条路由
+      - [ ] 运行中改 `economy.account` → `/m reload`（Railway 同名命令）后立刻生效，**不需重启**
+      - [ ] 没装 Vault → 两个插件照常启动，免费乘坐
 - [ ] **Regions 权限面**（`f670632` + `f87d915`，两批死节点接线）：
       - [ ] ⚠️ **上服前先扫权限插件配置**：`regions.use` 以前是死节点，现在真的生效。
             哪个组显式写了 `-regions.use`，那些人现在会被挡在 `/regions game` 之外

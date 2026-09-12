@@ -18,7 +18,7 @@
 | [`cubex-command`](modules/cubex-command) | 动态指令：CommandMap 解析、动态指令注册与生命期注销 | **2/12** | FAWEReplacer, RuleGems |
 | [`cubex-gui`](modules/cubex-gui) | 界面交互：基于 Inventory 实例事件路由的 Menu 框架、ItemBuilder、Pagination、ChatInputState | **6/12** | Contract, Metro, Railway, EcoBalancer, Regions, RuleGems |
 | [`cubex-spatial`](modules/cubex-spatial) | 空间索引：Point3D, Range3D (AABB), Octree 八叉树索引 | **2/12** | Metro, Railway |
-| [`cubex-economy`](modules/cubex-economy) | Vault 经济封装 + `economy.account` 入账路由（内循环经济） | **2/12** | StateCharge, RuleGems |
+| [`cubex-economy`](modules/cubex-economy) | Vault 经济封装 + `economy.account` 入账路由（内循环经济） | **6/12** | StateCharge, RuleGems, MountLicense, Metro, Railway, EcoBalancer |
 
 ---
 
@@ -379,6 +379,8 @@ CubeX 服务器的经济是内循环的：收费插件收走的钱要转进服�
 // 1. enable：hook Vault。返回 null 表示 Vault 或经济提供方缺席。
 economyService = VaultEconomy.hook(this, log())
     ?: abortEnable("Vault economy provider not found.")
+// 收费是可选玩法时别 abortEnable，改成降级：把字段留成可空、缺经济就不收费
+// （MountLicense 就是这么做的；按周期扣费的 StateCharge 才必须 abortEnable）。
 
 // 2. enable 与 reload 各解析一次 economy.account。名字解析可能触发一次
 //    阻塞的 profile 查询,**不能**放进每次扣款的路径里。
@@ -398,6 +400,19 @@ private fun applyEconomyAccount() {
 val result = economy().charge(player, cost)
 if (!result.success()) { /* 玩家付不起,回滚玩法侧 */ }
 ```
+
+#### 配置键不一定叫 `economy.account`
+
+已经发布的插件有自己的键名时，**不要为了对齐模块而改服主的配置**。
+EcoBalancer 保留 `tax-account`（开关）+ `tax-account-name`（账户名），
+在插件内部翻译成 `EconomyAccount.RawName` / `EconomyAccount.None` 再交给模块 ——
+模块要的是目标类型，不是某一行 YAML 的名字。
+
+#### 只接管一个分支也是合法用法
+
+Metro / Railway 的票款有两个去处：线路有 owner 就转给 owner（用 `withdraw` + `deposit`），
+没有 owner 才走 `charge()` 进 `economy.account`。**不要为了统一而把 owner 分支也改成 `charge()`** ——
+那会把玩家之间的收入分配改成服务器收入，是玩法变更，不是重构。
 
 #### 主动转账与消费扣费分开
 
