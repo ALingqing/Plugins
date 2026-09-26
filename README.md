@@ -26,7 +26,13 @@ CubeX 服务器插件 monorepo。开发用单仓库，产物仍是 **N 个可独
 
 # 启动本地测试服(run-paper, MC 1.20.1;插件已自动装入)
 .\gradlew.bat :Metro:runServer
+
+# 生成新插件骨架(默认内嵌模式；外置模式可加 -Pmode=external)
+.\gradlew.bat createPlugin -PpluginName=MyPlugin -Pmodules=core,config,i18n
 ```
+
+脚手架会登记 `settings.gradle.kts` 和重定位命名空间。若名称冲突或登记格式不符，
+它会在创建插件目录前报错；生成后按输出提示运行该插件的 `build` 与 `jarGate`。
 
 ---
 
