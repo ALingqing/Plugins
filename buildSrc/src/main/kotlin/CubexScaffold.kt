@@ -137,20 +137,39 @@ object CubexScaffold {
 
     /** 把插件名插进 `settings.gradle.kts` 的插件清单 `listOf(...)`。已存在则原样返回。 */
     fun withSettingsEntry(settings: String, name: String): String {
-        val quoted = "\"" + name + "\""
-        if (Regex(Regex.escape(quoted) + """\s*[,)]""").containsMatchIn(settings)) return settings
         val marker = "\").forEach {"
-        require(settings.contains(marker)) {
+        val markerIndex = settings.indexOf(marker)
+        require(markerIndex >= 0) {
             "settings.gradle.kts 里找不到插件清单 listOf(...).forEach { ,无法自动登记"
         }
-        return settings.replaceFirst(marker, "\", \"$name\").forEach {")
+        val listStart = settings.lastIndexOf("listOf(", markerIndex)
+        require(listStart >= 0) {
+            "settings.gradle.kts 里找不到插件清单 listOf(...).forEach { ,无法自动登记"
+        }
+        val pluginList = settings.substring(listStart, markerIndex + 2)
+        val quoted = "\"" + name + "\""
+        if (Regex(Regex.escape(quoted) + """\s*[,)]""").containsMatchIn(pluginList)) return settings
+        return settings.replaceRange(markerIndex, markerIndex + marker.length, "\", \"$name\").forEach {")
     }
 
     /** 把 pluginId 插进 `CubexRelocations.kt` 的 map。已存在则原样返回。 */
     fun withRelocationEntry(relocations: String, name: String, id: String): String {
-        if (relocations.contains("\"$name\" to ")) return relocations
+        val mapStart = relocations.indexOf("private val pluginIds = mapOf(")
         val marker = "    )"
-        require(relocations.contains(marker)) { "CubexRelocations.kt 结构不符合预期,无法自动登记" }
-        return relocations.replaceFirst(marker, "        \"$name\" to \"$id\",\n    )")
+        val mapEnd = if (mapStart >= 0) relocations.indexOf(marker, mapStart) else -1
+        require(mapEnd >= 0) { "CubexRelocations.kt 结构不符合预期,无法自动登记" }
+        val entryPattern = Regex("""^\s*"([^"]+)"\s+to\s+"([^"]+)"\s*,?\s*$""", RegexOption.MULTILINE)
+        val entries = entryPattern.findAll(relocations.substring(mapStart, mapEnd))
+            .map { it.groupValues[1] to it.groupValues[2] }
+            .toList()
+        val existingId = entries.firstOrNull { it.first == name }?.second
+        if (existingId != null) {
+            require(existingId == id) { "$name 已登记为 $existingId,不能改成 $id" }
+            return relocations
+        }
+        require(entries.none { it.second.equals(id, ignoreCase = true) }) {
+            "重定位命名空间 $id 已被其他插件使用"
+        }
+        return relocations.substring(0, mapEnd) + "        \"$name\" to \"$id\",\n" + relocations.substring(mapEnd)
     }
 }

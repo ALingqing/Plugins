@@ -74,6 +74,13 @@ class CubexScaffoldTest {
     }
 
     @Test
+    fun `settings registration ignores names outside the plugin list`() {
+        val settings = "// planned: \"Demo\",\nlistOf(\"BookLite\").forEach {"
+
+        assertTrue(CubexScaffold.withSettingsEntry(settings, "Demo").contains("""listOf("BookLite", "Demo").forEach {"""))
+    }
+
+    @Test
     fun `registers the plugin id in the relocations map`() {
         val relocations = "    private val pluginIds = mapOf(\n        \"BookLite\" to \"booklite\",\n    )\n"
 
@@ -88,5 +95,23 @@ class CubexScaffoldTest {
         val relocations = "    private val pluginIds = mapOf(\n        \"Demo\" to \"demo\",\n    )\n"
 
         assertEquals(relocations, CubexScaffold.withRelocationEntry(relocations, "Demo", "demo"))
+    }
+
+    @Test
+    fun `relocation registration rejects a reused namespace`() {
+        val relocations = "    private val pluginIds = mapOf(\n        \"Other\" to \"demo\",\n    )\n"
+
+        assertThrows<IllegalArgumentException> {
+            CubexScaffold.withRelocationEntry(relocations, "Demo", "demo")
+        }
+    }
+
+    @Test
+    fun `relocation registration rejects changing an existing namespace`() {
+        val relocations = "    private val pluginIds = mapOf(\n        \"Demo\" to \"demo\",\n    )\n"
+
+        assertThrows<IllegalArgumentException> {
+            CubexScaffold.withRelocationEntry(relocations, "Demo", "other")
+        }
     }
 }
