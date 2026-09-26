@@ -48,6 +48,10 @@ class ConfigFacade(private val plugin: Metro) {
     private var departureStay = 0
     private var departureFadeOut = 0
 
+    private var waitingInterval = 20
+    private var waitingFadeIn = 5
+    private var waitingStay = 40
+    private var waitingFadeOut = 10
     private var waitingTitleEnabled = false
     private var waitingTitle = ""
     private var waitingSubtitle = ""
@@ -78,9 +82,6 @@ class ConfigFacade(private val plugin: Metro) {
     private var lineSymbol = ""
 
     private var speedControlMode = ""
-    private var cruiseControlEnabled = false
-    private var cruiseControlTargetSpeed = -1.0
-    private var cruiseControlIntervalTicks = 2L
     private var blockSpeedMap: MutableMap<String, MutableMap<String, Double>> = HashMap()
 
     private var mapIntegrationEnabled = false
@@ -128,13 +129,14 @@ class ConfigFacade(private val plugin: Metro) {
     private var safeModeMinCruiseSpeed = 0.0
     private var safeModeStallRecoveryTicks = 0L
     private var economyEnabled = false
+    private var economyAccount = ""
 
     private var selectionTool: Material = Material.GOLDEN_SHOVEL
     private var selectionToolName = ""
 
     fun reload() {
         stopContinuousTitleEnabled = getStopContinuousBoolean("enabled", true)
-        stopContinuousInterval = getStopContinuousInt("interval", 40)
+        stopContinuousInterval = getStopContinuousInt("interval", 40).coerceAtLeast(1)
         stopContinuousAlways = getStopContinuousBoolean("always", true)
         stopContinuousTitle = colorize(getStopContinuousString("title", "&b{stop_name}"))
         stopContinuousSubtitle = colorize(
@@ -199,6 +201,10 @@ class ConfigFacade(private val plugin: Metro) {
         departureStay = plugin.config.getInt("titles.departure.stay", 40)
         departureFadeOut = plugin.config.getInt("titles.departure.fade_out", 5)
 
+        waitingInterval = plugin.config.getInt("titles.waiting.interval", 20).coerceAtLeast(1)
+        waitingFadeIn = plugin.config.getInt("titles.waiting.fade_in", 5).coerceAtLeast(0)
+        waitingStay = plugin.config.getInt("titles.waiting.stay", 40).coerceAtLeast(0)
+        waitingFadeOut = plugin.config.getInt("titles.waiting.fade_out", 10).coerceAtLeast(0)
         waitingTitleEnabled = plugin.config.getBoolean("titles.waiting.enabled", true)
         waitingTitle = colorize(plugin.config.getString("titles.waiting.title", "列车即将发车") ?: "列车即将发车")
         waitingSubtitle = colorize(
@@ -240,10 +246,6 @@ class ConfigFacade(private val plugin: Metro) {
         lineSymbol = plugin.config.getString("scoreboard.line_symbol", "❙") ?: "❙"
 
         speedControlMode = plugin.config.getString("speed_control.mode", "VANILLA_MOMENTUM") ?: "VANILLA_MOMENTUM"
-        cruiseControlEnabled = plugin.config.getBoolean("speed_control.cruise_control.enabled", false)
-        cruiseControlTargetSpeed = plugin.config.getDouble("speed_control.cruise_control.target_speed", -1.0)
-        cruiseControlIntervalTicks =
-            plugin.config.getLong("speed_control.cruise_control.interval_ticks", 2L).coerceAtLeast(1L)
         blockSpeedMap = HashMap()
         if (plugin.config.isConfigurationSection("speed_control.worlds")) {
             val worldsSection = plugin.config.getConfigurationSection("speed_control.worlds")
@@ -326,6 +328,7 @@ class ConfigFacade(private val plugin: Metro) {
         safeModeStallRecoveryTicks = plugin.config.getLong("settings.safe_mode.stall_recovery_ticks", 8L)
         bedrockArrivalSyncEnabled = plugin.config.getBoolean("settings.bedrock.arrival_sync", true)
         economyEnabled = plugin.config.getBoolean("economy.enabled", true)
+        economyAccount = plugin.config.getString("economy.account", "") ?: ""
 
         val toolName = plugin.config.getString("settings.selection_tool", "GOLDEN_SHOVEL") ?: "GOLDEN_SHOVEL"
         selectionTool = try {
@@ -367,24 +370,27 @@ class ConfigFacade(private val plugin: Metro) {
 
     fun getStopContinuousTitle(startStop: Boolean, endStop: Boolean): String =
         when {
-            startStop -> stopContinuousStartTitle
             endStop -> stopContinuousEndTitle
+            startStop -> stopContinuousStartTitle
             else -> stopContinuousTitle
         }
 
     fun getStopContinuousSubtitle(startStop: Boolean, endStop: Boolean): String =
         when {
-            startStop -> stopContinuousStartSubtitle
             endStop -> stopContinuousEndSubtitle
+            startStop -> stopContinuousStartSubtitle
             else -> stopContinuousSubtitle
         }
 
     fun getStopContinuousActionbar(startStop: Boolean, endStop: Boolean): String =
         when {
-            startStop -> stopContinuousStartActionbar
             endStop -> stopContinuousEndActionbar
+            startStop -> stopContinuousStartActionbar
             else -> stopContinuousActionbar
         }
+
+    fun getStopContinuousMultiLineTemplate(key: String): String? =
+        plugin.config.getString("titles.stop_continuous.multi_line.$key")?.let { colorize(it) }
 
     fun getStopContinuousFadeIn(): Int = stopContinuousFadeIn
 
@@ -393,6 +399,8 @@ class ConfigFacade(private val plugin: Metro) {
     fun getStopContinuousFadeOut(): Int = stopContinuousFadeOut
 
     fun isArriveStopTitleEnabled(): Boolean = arriveStopTitleEnabled
+
+    fun getArriveStopActionbar(): String = colorize(plugin.config.getString("titles.arrive_stop.actionbar", "") ?: "")
 
     fun getArriveStopTitle(): String = arriveStopTitle
 
@@ -405,6 +413,8 @@ class ConfigFacade(private val plugin: Metro) {
     fun getArriveStopFadeOut(): Int = arriveStopFadeOut
 
     fun isTerminalStopTitleEnabled(): Boolean = terminalStopTitleEnabled
+
+    fun getTerminalStopActionbar(): String = colorize(plugin.config.getString("titles.terminal_stop.actionbar", "") ?: "")
 
     fun getTerminalStopTitle(): String = terminalStopTitle
 
@@ -429,6 +439,11 @@ class ConfigFacade(private val plugin: Metro) {
     fun getDepartureStay(): Int = departureStay
 
     fun getDepartureFadeOut(): Int = departureFadeOut
+
+    fun getWaitingInterval(): Int = waitingInterval
+    fun getWaitingFadeIn(): Int = waitingFadeIn
+    fun getWaitingStay(): Int = waitingStay
+    fun getWaitingFadeOut(): Int = waitingFadeOut
 
     fun isWaitingTitleEnabled(): Boolean = waitingTitleEnabled
 
@@ -480,12 +495,6 @@ class ConfigFacade(private val plugin: Metro) {
 
     fun getSpeedControlMode(): String = speedControlMode
 
-    fun isCruiseControlEnabled(): Boolean = cruiseControlEnabled
-
-    fun getCruiseControlTargetSpeed(): Double = cruiseControlTargetSpeed
-
-    fun getCruiseControlIntervalTicks(): Long = cruiseControlIntervalTicks
-
     fun getBlockSpeedMap(): Map<String, Map<String, Double>> = blockSpeedMap
 
     fun isStationArrivalSoundEnabled(): Boolean = stationArrivalSoundEnabled
@@ -536,6 +545,13 @@ class ConfigFacade(private val plugin: Metro) {
     fun getSafeModeStallRecoveryTicks(): Long = safeModeStallRecoveryTicks
 
     fun isEconomyEnabled(): Boolean = economyEnabled
+
+    /**
+     * Where fares from lines **without an owner** are paid in.
+     * Empty keeps the old behaviour: the money is destroyed.
+     * Owned lines are unaffected - they still pay their owner.
+     */
+    fun getEconomyAccount(): String = economyAccount
 
     fun isDebugCategoryEnabled(category: String?): Boolean {
         if (!isDebugEnabled() || category == null || category.isEmpty()) {

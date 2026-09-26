@@ -125,7 +125,7 @@ class PortalManagerTest {
     }
 
     @Test
-    void forceSaveShouldRetryAfterCoordinatorFailure() {
+    void forceSaveShouldRetryAfterCoordinatorFailure() throws IOException {
         SaveCoordinator coordinator = mock(SaveCoordinator.class);
         doThrow(new RuntimeException("boom")).when(coordinator).saveNow(any(Path.class), anyString());
         PortalManager manager = new PortalManager(createPluginMock(tempDir, coordinator));
@@ -136,6 +136,30 @@ class PortalManagerTest {
         manager.forceSaveSync();
 
         verify(coordinator, times(2)).saveNow(any(Path.class), anyString());
+    }
+
+    @Test
+    void failedSyncSaveShouldLeaveUnsavedChangesForReloadGate() throws IOException {
+        SaveCoordinator coordinator = mock(SaveCoordinator.class);
+        doThrow(new IOException("disk full")).when(coordinator).saveNow(any(Path.class), anyString());
+        PortalManager manager = new PortalManager(createPluginMock(tempDir, coordinator));
+        manager.createPortal("p1", location("world", 1, 64, 1), UUID.randomUUID());
+
+        manager.forceSaveSync();
+
+        assertTrue(manager.hasUnsavedChanges());
+    }
+
+    @Test
+    void closeShouldFlushPendingChanges() throws Exception {
+        PortalManager manager = new PortalManager(createPluginMock(tempDir));
+        manager.createPortal("p1", location("world", 1, 64, 1), UUID.randomUUID());
+        assertTrue(manager.hasUnsavedChanges());
+
+        manager.close();
+
+        assertFalse(manager.hasUnsavedChanges());
+        assertTrue(Files.readString(tempDir.resolve("portals.yml")).contains("p1:"));
     }
 
     @Test

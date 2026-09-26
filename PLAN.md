@@ -1,11 +1,11 @@
 # CubeX-Plugins · 统一计划
 
-> **本文件是全仓唯一的计划/进度记录。** 2026-08-17 由 13 份分散的计划文件合并而来；
+> **本文件是全仓总体计划/进度记录。** 2026-08-17 由 13 份分散的计划文件合并而来；
 > 原始全文保留在 git 历史（合并前最后一次提交 `2783844`）。
 >
 > 分工：约定与硬约束看 [`AGENTS.md`](AGENTS.md)，构建看 [`README.md`](README.md)，
 > 架构看 [`ARCHITECTURE.md`](ARCHITECTURE.md)，共享模块用法看 [`MODULES.md`](MODULES.md)，
-> 发布记录看各插件 `CHANGELOG.md`。**新的待办只写进本文件**。
+> 发布记录看各插件 `CHANGELOG.md`。新的待办集中写进本文件；**2026-09-07 用户指定的 Regions 本轮实施计划例外**，见 [`Regions/PLAN.md`](Regions/PLAN.md)，本文件只保留入口，不重复维护具体任务。
 >
 > **本文下方提到的 `CUBEX_*_DESIGN.md` / `ARCHITECTURE_PROPOSAL.md` / `ROADMAP.md` /
 > `KOTLIN_MIGRATION_RUNBOOK.md` / 各插件 `IMPROVE_PLAN.md` 都已在 `484c1f6` 删除**，
@@ -60,8 +60,10 @@
 
 ### 2.3 `cubex-i18n` — 10/12
 
-`I18nService`：`raw`/`rawOrNull`/`rawList` · `message`(map/位置参数/指定 locale) · `messageList` ·
+`I18nService`：`raw`/`rawOrNull`/`rawList` · `message` · `messageList` ·
 `component`/`componentList`/`componentOf` · `send`；本身实现 `Reloadable`。
+**每一类都有显式 `locale` 重载**（2026-09 为 Regions 的按玩家语言补齐）：同一条广播可以
+逐接收者解析成各自的语言；旧签名全部委派新实现，行为不变。`render`（调用方自带模板）保持 locale 无关。
 `I18nOptions` 覆盖语言目录、locale（值或 `Supplier`）、fallback 链、bundled locales、
 `prefixKey`/`prefixToken`/`keyPrefix`、`MissingKeyMode`、`colorize`、`ColorMode`、`PlaceholderStyle`。
 `ColorMode` = `LEGACY_AND_HEX` / **`MINIMESSAGE`（已实现）**；
@@ -138,7 +140,7 @@ Metro/Railway 各自保留同名 `org.cubexmc.metro.gui.ItemBuilder` 作为**薄
 抽取前已核对 Metro 与 Railway 两侧内容**逐字节一致**（仅换行符不同）。
 按既定纪律**只下沉无状态空间索引**，`StopManager`/`Stop` 留在插件内。
 
-### 2.10 `cubex-economy` — 2/12（StateCharge · RuleGems）· 2026-08-21 新建
+### 2.10 `cubex-economy` — 6/12（StateCharge · RuleGems · MountLicense · Metro · Railway · EcoBalancer）· 2026-08-21 新建
 
 `VaultEconomy`（`has`/`balance`/`withdraw`/`deposit`/`charge`/`format` + `useAccount` 入账路由）·
 `EconomyAccount`（`economy.account` 的纯解析：空 / `uuid:<uuid>` / 裸 UUID / `<玩家名>` / `bank:<名字>`）·
@@ -152,12 +154,12 @@ Metro/Railway 各自保留同名 `org.cubexmc.metro.gui.ItemBuilder` 作为**薄
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | BookLite | ✅ | ✅ | ✅ | — | — | ✅ | — | — | — | — |
 | FAWEReplacer | ✅ | ✅ | ✅ | — | — | — | ✅ | — | — | — |
-| MountLicense | ✅ | ✅ | ✅ | — | — | — | — | — | — | — |
+| MountLicense | ✅ | ✅ | ✅ | — | — | — | — | — | — | ✅ |
 | Contract | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ | — | — |
-| EcoBalancer | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | — | — |
+| EcoBalancer | ✅ | ✅ | ✅ | ✅ | — | ✅ | — | ✅ | — | ✅ |
 | RuleGems | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ | — | ✅ |
-| Metro | ✅ | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | — |
-| Railway | ✅ | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | — |
+| Metro | ✅ | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | ✅ |
+| Railway | ✅ | ✅ | ✅ | ✅ | — | — | — | ✅ | ✅ | ✅ |
 | Regions | ✅ | ✅ | ✅ | ✅ | ✅ | — | — | ✅ | — | — |
 | StateCharge | ✅ | ✅ | ✅ | ✅ | — | — | — | — | — | ✅ |
 | Clarity | ✅ | — | — | — | — | — | — | — | — | — |
@@ -250,6 +252,15 @@ stdlib。我们的 `jarGate` 强制 `unrelocatedKotlin=0` 且测试随每次构�
         `PROVIDER_UNAVAILABLE`，停服前后 `PREPARING` lease 与 operation id 原样保留。
         双侧单测另覆盖落盘重启后的同 operation 重放、终态不重复付款、`REVIEW_REQUIRED`
         不转退款。
+      - [x] **2026-09-23 锁定回执不确定性加固**：Regions 在 lock 未确认时保留持久化
+        `PREPARING` lease；开赛中止及重启先用原 operation id 退款，无锁时同 ID 重放锁定再退款。
+        自动化覆盖已提交锁与未提交锁两端；联合 Paper 仅复验加载和无效 WAGER 连接。
+      - [x] **Contract 已落盘锁重放**：相同 operation id 与场地在 WAGER 后来完成或进入争议后仍返回
+        `REPLAYED`；不同 ID／场地拒绝，新的资格检查仍拒绝终态合同。持久化重启用例、Contract
+        全量测试与联合 Paper 加载通过，未据此勾选真人资金故障注入。
+      - [x] **Vault 失败回执的付款待办保全**：Contract 在入账调用返回失败后保留该笔 write-ahead
+        `DEPOSIT`，将 WAGER 标记争议并以 `REVIEW_REQUIRED` 阻止第二次付款。自动化覆盖首笔失败与
+        第二笔回执丢失的部分付款；真实 Vault 余额核对和人工处理仍待实服。
       - [ ] **仍需真人余额链路**：真实 WAGER 的 settle 中途关服、Vault provider 中途卸载、
         Contract 先卸载、人工处理 `REVIEW_REQUIRED`，并在 Paper 与 Folia 核对余额守恒。
 - ❌ ~~race / hide-and-seek / 赞助 / 多人分成的结果语义~~ —— 不是独立条目。
@@ -427,6 +438,8 @@ GUI 有完整领取流程；`Asset` 的展示串重复问题也已修好。2026-
 
 ### 5.2 Regions（待首个正式 release）
 
+**本轮实施入口（2026-09-07）**：[Regions 使用体验、国际化与战斗玩法实施计划](Regions/PLAN.md)。按用户要求，以 Lands Nation 为工会战队伍，新增单命淘汰大乱斗，并完善双人 PVP；国际化、操作流程、语言迁移与运行恢复分为 M0–M7 实施。以下是历史基线与长期方向，本轮工作和验收以该文件为准，尚未实现。
+
 阶段 A（授权与能力真实性）、B（模板化创作与发布）、C（运行时完整度与组合规则）代码层已收口；
 Paper 1.21.11 build 132 启动/reload/关闭/端到端控制台流程已验证。
 
@@ -437,10 +450,12 @@ Paper 1.21.11 build 132 启动/reload/关闭/端到端控制台流程已验证�
       但备份、原子写、保存失败回滚与失败报告都交给 `cubex-config`。目前没有迁移步骤——
       首个公开版本就是起点；以后改格式只需版本号 +1 并在那里 `addStep(...)`。
       至此 Regions 与 Contract 的模块接入完全一致
-- [ ] 校验器与第三方依赖的错误正文仍是英文常量，未拆成翻译键（真人验证中收集到的难懂文案先统一调整）
+- [ ] 错误文案键化（**2026-09-09 核对源码后收窄**）：校验与发布诊断已改成稳定错误码 +
+      双语 `errors.*`（见 [`Regions/PLAN.md`](Regions/PLAN.md) M1.2）；**剩下**`ServiceResult.reason`、
+      资金类 `FundingResult.detail` 与审计行的英文诊断文本，以及 GUI 文案仍按服务器语言渲染
 - [ ] 子命令升级为强类型 Brigadier 节点（当前 Lifecycle Command API + 权限过滤 + 参数补全已够用）
-- [ ] 第一个公开版本发布后**冻结**数据基线（`config-version: 4`、`regions-version: 4`、
-      `templates-version: 1`、`lang-version: 4`、`escrow-version: 1`）；此后任何格式变化必须提供
+- [ ] 第一个公开版本发布后**冻结**数据基线（当前源码为 `config-version: 4`、`regions-version: 4`、
+      `templates-version: 2`、`lang-version: 7`、`escrow-version: 1`，正式基线随首发确认）；此后任何格式变化必须提供
       从公开版本起的单向迁移 + 自动化测试
 - [ ] **阶段 D — 自治活动与可信结算**：活动排期/报名/准备/开赛/结果/归档状态机；对接 Contract 托管
       支持赞助、对赌、退款、自动结算（**race/hide-and-seek/多人分成的结算语义在这里定，见 R1**）；
@@ -450,7 +465,7 @@ Paper 1.21.11 build 132 启动/reload/关闭/端到端控制台流程已验证�
       **新 Mode 和新 Source 不得抢在 A-C 之前扩张**
 - [ ] 候选：GUI 层切到 `cubex-gui`（原计划已建议复用 Contract 的 Menu/InventoryButton 风格，现已成模块）
 
-**明确不进入下个里程碑**：新增更多 Mode · 新 Source · 普通领主/非统治者管理 Region ·
+**明确不进入下个里程碑**：除本轮已授权 `free_for_all` 之外的更多 Mode · 新 Source · 普通领主/非统治者管理 Region ·
 协作者角色系统 · 模板市场与 Web 管理 · 脚本语言 · 普通统治者可发布的控制台或 OP 提权 action。
 
 **仍生效的关键设计决策（改代码前必读）**
@@ -838,12 +853,42 @@ MountLicense / StateCharge 直接 `withdrawPlayer` 后蒸发。除 EcoBalancer �
       （名字解析要查 usercache/存档，不能落进每分钟一次的结算里）
 - [x] **RuleGems 包名撞车已消除（2026-08-27）**：删除本地 EconomyProvider/ItemBuilder；
       GUI 业务类移到 `org.cubexmc.rulegems.gui`。仍采用 EMBEDDED，不切外置模式。
-- [ ] **其余消费方迁移**（每个都是独立提交，不要和玩法改动混在一起）：
-      - [ ] **MountLicense**：最简单，一处 `withdraw`，与 StateCharge 同形
-      - [ ] **Metro / Railway**：现有"有 owner 转 owner"的行为要保留，`economy.account` 只接管 owner 缺席的分支
+- [ ] **其余消费方迁移**（每个都是独立提交，不要和玩法改动混在一起）—— **2026-09-09 后只剩 Contract 一家，而它是被 §4 R1 卡住的，不是排期问题**：
+      - [x] **MountLicense（2026-09-09）**：删掉反射实现的 `integration/EconomyHook.kt`，
+            注册费改走 `VaultEconomy.charge()`；config v2→3 加 `economy.account`（`EconomyAccountStep`，3 条单测）。
+            与 StateCharge 的**一处不同**：缺 Vault 不 `abortEnable` 而是降级成不收费 ——
+            收费在这里是可选玩法（`economy.enabled` / `register_cost: 0`），而按周期扣费的 StateCharge 没经济就无法工作。
+            `economy.enabled` 每次注册现查（reload 立刻生效）；写入失败的退款仍是 `deposit` 给玩家，
+            **不**从 `economy.account` 转回（Vault 无事务），该路径会让服务器账户多出一笔，已在代码里标注对帐线索。
+            `/ml reload` 在没接上经济时会**重试 hook**（旧的 `EconomyHook` 是懒初始化的，天然能接晚注册的 provider；
+            改成 enable 时 hook 后要把这条退路补回来）。
+            RegistryService 新增 3 条单测（余额不足 / 走 charge 而非裸 withdraw + 写入失败退款 / `economy.enabled=false` 不碰经济）
+      - [x] **Metro / Railway（2026-09-09）**：分支已拆开 —— `TicketService.collectFare()` 里
+            **有 owner 走原来的 withdraw + deposit(owner)（行为一字未改，含 Metro 那边的失败退款）**，
+            **无 owner 改走 `VaultIntegration.chargeToAccount()`**（= `VaultEconomy.charge`，扣款+入账一步）。
+            两家各自的 config 加 `economy.account`（Metro v3→4、Railway v2→3，默认空串 = 旧的销毁行为），
+            `applyEconomyAccount()` 在 enable 与 reload 各解析一次（Metro 挂在 `refreshVaultIntegration()` 里，
+            它本来就会重接提供方）。
+            **顺手修掉的迁移陷阱**：两侧都有一个旧 step 把 `toVersion()` 写成 `CONFIG_VERSION` 常量（Metro 的
+            `MetroMidRouteExitFareStep`、Railway 的 `MetroConfigModernizationStep`）—— 常量一涨，那一步就变成
+            "2→4"的跳级，中间版本的新键永远合不进来；现已钉成字面量并用链路单测锁住。
+            新增单测：Metro 4 条（链路、v3→v4 加键不改付费、保留服主已写账户、无/有 owner 两条路径）、
+            Railway 5 条（同形）
       - [x] **RuleGems（2026-08-27）**：`VaultTransfers` 承接独立转账/补偿，
             显式命名账户与可信 UUID 路由；移除全量离线枚举。异常结果要求人工核账，开关仍默认关闭。
-      - [ ] **EcoBalancer**：已能工作，最后再迁，且必须保持 `tax-account` / `tax-account-name` 键兼容
+      - [x] **EcoBalancer（2026-09-09）**：`tax-account` / `tax-account-name` **两个键一字未改**，
+            由新的 [`TaxTreasury`](EcoBalancer/src/main/java/org/cubexmc/ecobalancer/tax/TaxTreasury.kt) 翻译成
+            `EconomyAccount.RawName` / `None`（名字原样进 Vault 的 name 重载，与迁移前的 `depositPlayer(String, Double)` 同一调用）。
+            **主要收获不是去重，是把静默失败挖出来**：原来 `withdrawPlayer` + `depositPlayer` 两次都不看返回值，
+            经济插件拒绝扣款时账本照样记一笔不存在的税（`total_tax_paid` 与 `tax_fund_balance` 一起虚高，且无日志）。
+            现在：扣款失败 → 新枚举值 `ECONOMY_FAILED` + 金额记 0（`recordTax` 只收 > 0，因此不进账本）+ WARNING + `messages.tax.economy_failed`；
+            扣到但没入账 → 仍算玩家已缴（钱确实走了），另记一条 WARNING 供核账。
+            顺手：负余额修复与 `/eb restore` 的退款也改成看返回值；删掉 `VaultUtils` 里无人调用的
+            `setupTaxAccount` / `getTaxAccountBalance` / `depositToTaxAccount` 三个死函数。
+            lang 加 `messages.tax.economy_failed`，lang-version 4→5 用**只合新键**的 `MergeLanguageDefaultsStep`
+            （故意不复用 `ModernizeLanguageStep`：v4 已是 MiniMessage，再跑一遍 legacy 转换会去动服主写的 `&`）。
+            单测：`TaxTreasuryTest` 6 条（拒扣 / null 响应 / 入账失败仍算已缴 / 按名入账 / 关闭税金账户 / 非法账户名）
+            + 迁移套件新增 "v4 文件只合新键、不重写服主文案"
       - [ ] **Contract**：`SYSTEM_SINK` 接入本模块 —— **等 §4 R1 真钱故障注入验证之后再动**
 
 #### 已下沉的其余项（2026-08-19）
@@ -933,7 +978,10 @@ MountLicense / StateCharge 直接 `withdrawPlayer` 后蒸发。除 EcoBalancer �
       的指针**，按 [`CLAUDE.md`](CLAUDE.md) 的先例。三份会漂移的规则副本对 agent 是**反效果**——
       读到互相矛盾的规则比没有规则更糟
 - [ ] 给 `modules/` 的约定插件加 `explicitApi()`。理由不是对外契约（对内不需要），
-      而是**显式返回类型让 agent 少猜**
+      而是**显式返回类型让 agent 少猜**。
+      **排在 Regions 本轮之后（2026-09-09 用户确认）**：实际试开过一次（`kotlin { explicitApi() }`），
+      光 `cubex-core` 一个模块就报几十处 "Visibility must be specified"，十个模块加起来是几百处纯机械的 `public`。
+      这种横扫式大 diff 不能和 Regions 在途的改动撞在一起
 - ❌ ~~`docs/ai-prompts/` few-shot 提示词模板库~~ —— 可编译可测试的 cookbook（§7.3）是更好的
       grounding 数据；提示词模板没有任何机制阻止它腐烂
 

@@ -82,21 +82,30 @@ internal class SimpleI18nService(
     }
 
     override fun messageList(key: String?, placeholders: Map<String, *>?): List<String> =
-        rawList(key).map { format(it, placeholders) }
+        messageList(key, locale, placeholders)
+
+    override fun messageList(key: String?, locale: String?, placeholders: Map<String, *>?): List<String> =
+        rawList(key, locale).map { format(it, placeholders) }
 
     override fun render(template: String?, placeholders: Map<String, *>?): String = format(template, placeholders)
 
     override fun component(key: String?): Component = component(key, emptyMap<String, Any?>())
 
     override fun component(key: String?, placeholders: Map<String, *>?): Component =
+        component(key, locale, placeholders)
+
+    override fun component(key: String?, locale: String?, placeholders: Map<String, *>?): Component =
         if (options.colorMode() == ColorMode.MINIMESSAGE) {
             deserializeMiniMessage(raw(key, locale), placeholders)
         } else {
-            componentOf(message(key, placeholders))
+            componentOf(message(key, locale, placeholders))
         }
 
     override fun componentList(key: String?, placeholders: Map<String, *>?): List<Component> =
-        rawList(key).map { line ->
+        componentList(key, locale, placeholders)
+
+    override fun componentList(key: String?, locale: String?, placeholders: Map<String, *>?): List<Component> =
+        rawList(key, locale).map { line ->
             if (options.colorMode() == ColorMode.MINIMESSAGE) deserializeMiniMessage(line, placeholders)
             else componentOf(format(line, placeholders))
         }
@@ -105,6 +114,10 @@ internal class SimpleI18nService(
 
     override fun send(sender: CommandSender?, key: String?, placeholders: Map<String, *>?) {
         if (sender != null) sender.sendMessage(message(key, placeholders))
+    }
+
+    override fun send(sender: CommandSender?, key: String?, locale: String?, placeholders: Map<String, *>?) {
+        if (sender != null) sender.sendMessage(message(key, locale, placeholders))
     }
 
     private fun lookup(locale: String?, key: String?): String? {
@@ -140,9 +153,21 @@ internal class SimpleI18nService(
         return languages.computeIfAbsent(locale, ::loadConfiguration)
     }
 
+    /**
+     * 磁盘文件在前、**jar 内同语言默认文本在后**。
+     *
+     * 此前只读磁盘文件：服主装插件时 `saveIfMissing` 写下的那份拷贝会永久定型，之后插件新增的
+     * 任何语言键在这台服务器上都解析不出来——`labels.*` 原样显示成键名、`errors.*` 退化成英文
+     * 诊断（2026-09-13 实服验证发现）。`setDefaults` 让磁盘值始终保持优先，jar 内文本只在文件
+     * 缺这个键时兜底，因此服主的自定义翻译与未知键都不受影响。
+     */
     private fun loadConfiguration(locale: String): YamlConfiguration {
         val file = languageFile(locale)
-        return if (file.exists()) YamlConfiguration.loadConfiguration(file) else YamlConfiguration()
+        val disk = if (file.exists()) YamlConfiguration.loadConfiguration(file) else YamlConfiguration()
+        val bundled = plugin.getResource(resourcePath(locale).replace(File.separatorChar, '/')) ?: return disk
+        return disk.apply {
+            setDefaults(bundled.use { YamlConfiguration.loadConfiguration(it.reader(Charsets.UTF_8)) })
+        }
     }
 
     private fun languageFile(locale: String): File = File(plugin.dataFolder, resourcePath(locale))

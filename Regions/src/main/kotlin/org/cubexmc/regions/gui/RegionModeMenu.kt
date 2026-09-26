@@ -4,8 +4,10 @@ import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
+import org.cubexmc.regions.match.MatchSpawns
 import org.cubexmc.regions.model.ModeConfig
 import org.cubexmc.regions.model.RegionDefinition
+import java.util.Locale
 import java.util.UUID
 
 /**
@@ -25,99 +27,212 @@ internal class RegionModeMenu(private val gui: RegionsGui) {
         14 to "union_war",
         15 to "horse_race",
         16 to "hide_and_seek",
+        17 to "free_for_all",
     )
 
-    fun open(player: Player, regionId: String) {
+    fun open(
+        player: Player,
+        regionId: String,
+        returnToPublish: Boolean = false,
+        tab: ModeTab = ModeTab.BASIC,
+    ) {
         val region = gui.editable(regionId) ?: return gui.openMain(player)
         val mode = region.mode ?: ModeConfig("free_event")
         val values = mode.values
+        // 该玩法没有这块内容时回到基础页，不让人停在空白标签上。
+        val active = if (ModeTabs.hasContent(mode.type, tab)) tab else ModeTab.BASIC
         val inventory = Bukkit.createInventory(
-            RegionsHolder(View.MODE, region.id),
+            RegionsHolder(View.MODE, region.id, returnToPublish = returnToPublish, modeTab = active),
             54,
-            text.component("gui.mode.title", mapOf("id" to region.id)),
+            text.component(player, "gui.mode.title." + active.name.lowercase(Locale.ROOT) + "", mapOf("id" to region.id)),
         )
-        inventory.setItem(4, items.region(region))
+        inventory.setItem(4, items.region(player, region))
         for ((slot, type) in modeSlots) {
-            inventory.setItem(slot, items.mode(type, region.mode?.type))
+            inventory.setItem(slot, items.mode(player, type, region.mode?.type))
         }
 
         val defaultVehicle = GuiValues.defaultVehicle(mode.type)
         val here = GuiValues.formatLocation(player.location)
-        inventory.setItem(19, setting(Material.PLAYER_HEAD, "gui.mode.min-players", values["min-players"] ?: "2"))
-        inventory.setItem(20, setting(Material.SKELETON_SKULL, "gui.mode.max-players", values["max-players"] ?: text.text("gui.common.unlimited")))
-        inventory.setItem(21, setting(Material.BELL, "gui.mode.require-ready", values["require-ready"] ?: "true"))
-        inventory.setItem(22, setting(Material.CHEST, "gui.mode.replace-gear", values["replace-gear"] ?: "true"))
-        inventory.setItem(23, setting(Material.BEACON, "gui.mode.min-unions", values["min-unions"] ?: "2"))
-        inventory.setItem(24, setting(Material.MINECART, "gui.mode.vehicle", items.describeVehicle(values["vehicle"] ?: defaultVehicle)))
-        inventory.setItem(25, text.item(Material.ENDER_PEARL, "gui.mode.set-respawn", mapOf("location" to here)))
+        inventory.setItem(19, setting(player, Material.PLAYER_HEAD, "gui.mode.min-players", values["min-players"] ?: "2"))
+        inventory.setItem(20, setting(player, Material.SKELETON_SKULL, "gui.mode.max-players", values["max-players"] ?: text.text(player, "gui.common.unlimited")))
+        inventory.setItem(21, setting(player, Material.BELL, "gui.mode.require-ready", text.boolDisplay(player, values["require-ready"] ?: "true")))
+        inventory.setItem(22, setting(player, Material.CHEST, "gui.mode.replace-gear", text.boolDisplay(player, values["replace-gear"] ?: "true")))
+        inventory.setItem(23, setting(player, Material.BEACON, "gui.mode.min-unions", values["min-unions"] ?: "2"))
+        inventory.setItem(24, setting(player, Material.MINECART, "gui.mode.vehicle", items.describeVehicle(player, values["vehicle"] ?: defaultVehicle)))
+        inventory.setItem(25, text.item(player, Material.ENDER_PEARL, "gui.mode.set-respawn", mapOf("location" to here)))
         inventory.setItem(
             26,
-            setting(Material.TRIPWIRE_HOOK, "gui.mode.start-vehicle", items.describeVehicle(values["start-vehicle"] ?: values["vehicle"] ?: defaultVehicle)),
+            setting(player, Material.TRIPWIRE_HOOK, "gui.mode.start-vehicle", items.describeVehicle(player, values["start-vehicle"] ?: values["vehicle"] ?: defaultVehicle)),
         )
-        inventory.setItem(28, text.item(Material.IRON_SWORD, "gui.mode.kit-iron"))
-        inventory.setItem(29, text.item(Material.BOW, "gui.mode.kit-bow"))
-        inventory.setItem(30, text.item(Material.DIAMOND_SWORD, "gui.mode.kit-diamond"))
-        inventory.setItem(31, text.item(GuiIcons.CLEAR, "gui.mode.kit-clear"))
+        inventory.setItem(28, text.item(player, Material.IRON_SWORD, "gui.mode.kit-iron"))
+        inventory.setItem(29, text.item(player, Material.BOW, "gui.mode.kit-bow"))
+        inventory.setItem(30, text.item(player, Material.DIAMOND_SWORD, "gui.mode.kit-diamond"))
+        inventory.setItem(31, text.item(player, GuiIcons.CLEAR, "gui.mode.kit-clear"))
         inventory.setItem(
             32,
-            setting(Material.REDSTONE, "gui.mode.finish-vehicle", items.describeVehicle(values["finish-vehicle"] ?: values["vehicle"] ?: defaultVehicle)),
+            setting(player, Material.REDSTONE, "gui.mode.finish-vehicle", items.describeVehicle(player, values["finish-vehicle"] ?: values["vehicle"] ?: defaultVehicle)),
         )
         inventory.setItem(
             33,
-            text.item(Material.LODESTONE, "gui.mode.respawn", mapOf("value" to (values["respawn"] ?: values["outside"] ?: text.text("gui.common.unset")))),
+            text.item(player, Material.LODESTONE, "gui.mode.respawn", mapOf("value" to (values["respawn"] ?: values["outside"] ?: text.text(player, "gui.common.unset")))),
         )
-        inventory.setItem(34, text.item(Material.LAVA_BUCKET, "gui.mode.respawn-clear"))
-        inventory.setItem(36, text.item(Material.GREEN_WOOL, "gui.mode.set-start", mapOf("value" to (values["start"] ?: text.text("gui.common.unset")))))
-        inventory.setItem(37, text.item(Material.RED_WOOL, "gui.mode.set-finish", mapOf("value" to (values["finish"] ?: text.text("gui.common.unset")))))
+        inventory.setItem(34, text.item(player, Material.LAVA_BUCKET, "gui.mode.respawn-clear"))
+        inventory.setItem(36, text.item(player, Material.GREEN_WOOL, "gui.mode.set-start", mapOf("value" to (values["start"] ?: text.text(player, "gui.common.unset")))))
+        inventory.setItem(37, text.item(player, Material.RED_WOOL, "gui.mode.set-finish", mapOf("value" to (values["finish"] ?: text.text(player, "gui.common.unset")))))
         inventory.setItem(
             38,
             text.item(
+                player,
                 Material.YELLOW_WOOL,
                 "gui.mode.add-checkpoint",
                 mapOf(
                     "count" to GuiValues.checkpointCount(values["checkpoints"]).toString(),
-                    "vehicle" to items.describeVehicle(values["vehicle"] ?: defaultVehicle),
+                    "vehicle" to items.describeVehicle(player, values["vehicle"] ?: defaultVehicle),
                     "location" to here,
                 ),
             ),
         )
-        inventory.setItem(39, text.item(Material.SHEARS, "gui.mode.clear-checkpoints"))
-        inventory.setItem(40, setting(Material.TARGET, "gui.mode.require-start", values["require-start"] ?: "true"))
-        inventory.setItem(41, setting(Material.ENDER_EYE, "gui.mode.teleport-start", values["teleport-start"] ?: "false"))
-        inventory.setItem(42, setting(Material.LEVER, "gui.mode.start-mode", values["start-mode"] ?: "vote"))
-        inventory.setItem(43, setting(Material.SLIME_BALL, "gui.mode.radius", values["radius"] ?: "2.5"))
-        inventory.setItem(44, judgeItem(values))
-        inventory.setItem(45, setting(Material.ENDER_EYE, "gui.mode.seekers", values["seekers"] ?: text.text("gui.common.auto")))
-        inventory.setItem(46, setting(Material.CLOCK, "gui.mode.hide-seconds", values["hide-seconds"] ?: "30"))
-        inventory.setItem(47, setting(Material.RECOVERY_COMPASS, "gui.mode.round-seconds", values["round-seconds"] ?: "300"))
-        inventory.setItem(48, text.item(Material.PAPER, "gui.mode.advanced"))
-        inventory.setItem(49, items.back())
-        inventory.setItem(50, setting(Material.PLAYER_HEAD, "gui.mode.found-becomes-seeker", values["found-becomes-seeker"] ?: "true"))
-        inventory.setItem(51, setting(Material.CLOCK, "gui.mode.timeout-seconds", values["timeout-seconds"] ?: "300"))
+        inventory.setItem(39, text.item(player, Material.SHEARS, "gui.mode.clear-checkpoints"))
+        inventory.setItem(40, setting(player, Material.TARGET, "gui.mode.require-start", text.boolDisplay(player, values["require-start"] ?: "true")))
+        inventory.setItem(41, setting(player, Material.ENDER_EYE, "gui.mode.teleport-start", text.boolDisplay(player, values["teleport-start"] ?: "false")))
+        inventory.setItem(42, setting(player, Material.LEVER, "gui.mode.start-mode", text.enumDisplay(player, "start-mode", values["start-mode"] ?: "vote")))
+        inventory.setItem(43, setting(player, Material.SLIME_BALL, "gui.mode.radius", values["radius"] ?: "2.5"))
+        inventory.setItem(44, judgeItem(player, values))
+        inventory.setItem(45, setting(player, Material.ENDER_EYE, "gui.mode.seekers", values["seekers"] ?: text.text(player, "gui.common.auto")))
+        inventory.setItem(46, setting(player, Material.CLOCK, "gui.mode.hide-seconds", values["hide-seconds"] ?: "30"))
+        inventory.setItem(47, setting(player, Material.RECOVERY_COMPASS, "gui.mode.round-seconds", values["round-seconds"] ?: "300"))
+        inventory.setItem(48, text.item(player, Material.PAPER, "gui.mode.advanced"))
+        inventory.setItem(49, items.back(player))
+        inventory.setItem(50, setting(player, Material.PLAYER_HEAD, "gui.mode.found-becomes-seeker", text.boolDisplay(player, values["found-becomes-seeker"] ?: "true")))
+        inventory.setItem(51, setting(player, Material.CLOCK, "gui.mode.timeout-seconds", values["timeout-seconds"] ?: "300"))
+        // 战斗玩法的点位与赛制（M3/M4/M6）：与竞速/捉迷藏共用槽位。
+        // 渲染与点击共用 [CombatModeSlots]，两边不允许各写一份。
+        if (mode.type.equals("union_war", ignoreCase = true)) {
+            // 对阵不再需要敲 ULID：点进去用名字选（PLAN.md §5.4 的傻瓜化）。
+            val (teamA, teamB) = plugin.combatModes().selectedTeams(region.id)
+            inventory.setItem(
+                26,
+                text.item(
+                    player,
+                    Material.WHITE_BANNER,
+                    "gui.mode.teams",
+                    mapOf(
+                        "a" to (teamA?.let { teamName(region.id, it) } ?: text.text(player, "gui.common.unset")),
+                        "b" to (teamB?.let { teamName(region.id, it) } ?: text.text(player, "gui.common.unset")),
+                    ),
+                ),
+            )
+        }
+        if (CombatModeSlots.isCombat(mode.type)) {
+            for (slot in CombatModeSlots.SHARED_SLOTS + 24) {
+                val item = when (CombatModeSlots.of(mode.type, slot)) {
+                    CombatSlot.SPAWN_A -> text.item(
+                        player,
+                        Material.LODESTONE,
+                        if (mode.type.equals("union_war", ignoreCase = true)) "gui.mode.add-spawn-a" else "gui.mode.add-spawn",
+                        mapOf(
+                            "count" to MatchSpawns.parseList(values["spawn-points"]).size.toString(),
+                            "location" to here,
+                        ),
+                    )
 
-        val allowed = GuiSlots.modeConfiguration(mode.type).toMutableSet()
-        if (plugin.authority().isSuperAdmin(player)) allowed.add(48)
+                    CombatSlot.SPAWN_B -> text.item(
+                        player,
+                        Material.RESPAWN_ANCHOR,
+                        "gui.mode.add-spawn-b",
+                        mapOf(
+                            "count" to MatchSpawns.parseList(values["spawn-points-b"]).size.toString(),
+                            "location" to here,
+                        ),
+                    )
+
+                    CombatSlot.CLEAR_SPAWNS -> text.item(player, Material.SHEARS, "gui.mode.clear-spawns")
+
+                    CombatSlot.ROUND_SECONDS ->
+                        setting(player, Material.RECOVERY_COMPASS, "gui.mode.round-seconds", values["round-seconds"] ?: "180")
+
+                    CombatSlot.TEAM_SIZE ->
+                        setting(player, Material.PLAYER_HEAD, "gui.mode.team-size", values["team-size"] ?: "5")
+
+                    CombatSlot.TIMEOUT_SECONDS ->
+                        setting(player, Material.CLOCK, "gui.mode.timeout-seconds", values["timeout-seconds"] ?: "600")
+
+                    CombatSlot.BEST_OF ->
+                        setting(player, Material.NETHER_STAR, "gui.mode.best-of", values["best-of"] ?: "1")
+
+                    CombatSlot.DIPLOMACY ->
+                        setting(player, Material.WRITABLE_BOOK, "gui.mode.diplomacy", values["diplomacy"] ?: "agreed")
+
+                    null -> continue
+                }
+                inventory.setItem(slot, item)
+            }
+        }
+
+        val allowed = ModeTabs.slotsFor(mode.type, active).toMutableSet()
+        if (plugin.authority().isSuperAdmin(player) && active == ModeTab.BASIC) allowed.add(48)
         for (slot in GuiSlots.MODE_CONFIGURATION) {
             if (!allowed.contains(slot)) inventory.setItem(slot, null)
         }
+        if (active == ModeTab.SPAWNS && CombatModeSlots.isCombat(mode.type)) {
+            // 清单单独一页：玩法页的格子不够排下十几个点，也不该为了排下去挤掉其他设置。
+            val union = mode.type.equals("union_war", ignoreCase = true)
+            inventory.setItem(
+                44,
+                text.item(
+                    player,
+                    Material.LODESTONE,
+                    "gui.mode.spawn-list",
+                    mapOf(
+                        "count" to MatchSpawns.parseList(values["spawn-points"]).size.toString(),
+                        "count_b" to MatchSpawns.parseList(values["spawn-points-b"]).size.toString(),
+                        "side" to text.text(player, if (union) "gui.mode.spawn-list.two-sides" else "gui.mode.spawn-list.one-side"),
+                    ),
+                ),
+            )
+        }
+        renderTabs(player, inventory, mode.type, active)
         player.openInventory(inventory)
     }
 
-    private fun setting(material: Material, key: String, value: String) =
-        text.item(material, key, mapOf("value" to value))
+    /** 已选队伍的显示名；工会已解散/改名时回退到 ID，不假装还认识它。 */
+    private fun teamName(regionId: String, unionId: String): String =
+        plugin.unions().active()?.allUnions()?.firstOrNull { it.id == unionId }
+            ?.let { org.cubexmc.regions.integration.UnionLookup.plainName(it.name) }
+            ?: unionId
 
-    fun click(player: Player, regionId: String, slot: Int, rightClick: Boolean) {
+    private fun setting(viewer: Player, material: Material, key: String, value: String) =
+        text.item(viewer, material, key, mapOf("value" to value))
+
+    fun click(player: Player, holder: RegionsHolder, slot: Int, rightClick: Boolean) {
+        val regionId = holder.regionId ?: return gui.openMain(player)
         val region = gui.editable(regionId) ?: return gui.openMain(player)
         val mode = region.mode ?: ModeConfig("free_event")
-        if (slot in GuiSlots.MODE_CONFIGURATION && slot != 48 && !GuiSlots.modeConfiguration(mode.type).contains(slot)) {
+        val tab = holder.modeTab
+        ModeTab.entries.firstOrNull { it.slot == slot }?.let { picked ->
+            return open(player, regionId, holder.returnToPublish, picked)
+        }
+        if (slot == 44 && tab == ModeTab.SPAWNS && CombatModeSlots.isCombat(mode.type)) {
+            return gui.spawnList.open(player, regionId)
+        }
+        if (slot in GuiSlots.MODE_CONFIGURATION && slot != 48 &&
+            !ModeTabs.slotsFor(mode.type, tab).contains(slot)
+        ) {
             return
         }
         if (slot == 48 && !plugin.authority().isSuperAdmin(player)) return
+        if (slot == 26 && mode.type.equals("union_war", ignoreCase = true)) {
+            return gui.unionPicker.open(player, regionId)
+        }
         modeSlots[slot]?.let { type ->
             val values = if (region.mode?.type == type) region.mode.values else GuiValues.defaultModeValues(type)
             return gui.saveAndReopen(player, region.copy(mode = ModeConfig(type, values))) { open(player, regionId) }
         }
         val values = mode.values
+        combatSlot(values, mode.type, slot, rightClick, player)?.let { updated ->
+            save(player, region, updated)
+            return
+        }
         val updated: Map<String, String> = when (slot) {
             19 -> GuiValues.adjustInt(values, "min-players", 2, rightClick, min = 1)
             20 -> GuiValues.adjustInt(values, "max-players", 0, rightClick, min = 0, removeAtZero = true)
@@ -156,13 +271,63 @@ internal class RegionModeMenu(private val gui: RegionsGui) {
             46 -> GuiValues.adjustInt(values, "hide-seconds", 30, rightClick, min = 0, step = 10)
             47 -> GuiValues.adjustInt(values, "round-seconds", 300, rightClick, min = 0, removeAtZero = true, step = 60)
             48 -> return promptModeValue(player, region)
-            49 -> return gui.openDetail(player, regionId)
+            49 -> return if (holder.returnToPublish) {
+                gui.publish.open(player, regionId)
+            } else {
+                gui.openDetail(player, regionId)
+            }
             50 -> GuiValues.toggleBool(values, "found-becomes-seeker", true)
             51 -> GuiValues.adjustInt(values, "timeout-seconds", 300, rightClick, min = 60, step = 60)
             else -> return
         }
-        save(player, region, updated)
+        save(player, region, updated, tab)
     }
+
+    /**
+     * 战斗玩法的共用槽位先查 [CombatModeSlots]，再落回通用分支。
+     * 这一步必须在通用 `when (slot)` **之前**：通用分支里 45/46/47 已经被
+     * seekers / hide-seconds / round-seconds 占着，写在后面的同号分支永远不会被选中。
+     */
+    private fun combatSlot(
+        values: Map<String, String>,
+        modeType: String,
+        slot: Int,
+        rightClick: Boolean,
+        player: Player,
+    ): Map<String, String>? = when (CombatModeSlots.of(modeType, slot)) {
+        CombatSlot.SPAWN_A -> appendSpawn(values, "spawn-points", player)
+
+        CombatSlot.SPAWN_B -> appendSpawn(values, "spawn-points-b", player)
+
+        CombatSlot.CLEAR_SPAWNS -> LinkedHashMap(values).apply {
+            remove("spawn-points")
+            remove("spawn-points-b")
+        }
+
+        CombatSlot.ROUND_SECONDS -> GuiValues.adjustInt(values, "round-seconds", 180, rightClick, min = 30, step = 30)
+
+        CombatSlot.TEAM_SIZE -> GuiValues.adjustInt(values, "team-size", 5, rightClick, min = 2)
+
+        CombatSlot.TIMEOUT_SECONDS ->
+            GuiValues.adjustInt(values, "timeout-seconds", 600, rightClick, min = 60, step = 60)
+
+        CombatSlot.BEST_OF -> LinkedHashMap(values).apply {
+            this["best-of"] = if ((this["best-of"]?.toIntOrNull() ?: 1) >= 3) "1" else "3"
+        }
+
+        CombatSlot.DIPLOMACY -> LinkedHashMap(values).apply {
+            this["diplomacy"] = if (this["diplomacy"].equals("enemy-only", ignoreCase = true)) "agreed" else "enemy-only"
+        }
+
+        null -> null
+    }
+
+    private fun appendSpawn(values: Map<String, String>, key: String, player: Player): Map<String, String> =
+        LinkedHashMap(values).apply {
+            val existing = this[key].orEmpty()
+            val here = GuiValues.formatLocation(player.location)
+            this[key] = if (existing.isBlank()) here else "$existing;$here"
+        }
 
     private fun appendCheckpoint(values: Map<String, String>, modeType: String, player: Player): Map<String, String> =
         LinkedHashMap(values).apply {
@@ -175,21 +340,36 @@ internal class RegionModeMenu(private val gui: RegionsGui) {
                 if (existingVehicles.isBlank()) checkpointVehicle else "$existingVehicles;$checkpointVehicle"
         }
 
-    private fun save(player: Player, region: RegionDefinition, values: Map<String, String>) {
+    private fun save(
+        player: Player,
+        region: RegionDefinition,
+        values: Map<String, String>,
+        tab: ModeTab = ModeTab.BASIC,
+    ) {
         val mode = region.mode ?: ModeConfig("free_event")
-        gui.saveAndReopen(player, region.copy(mode = mode.copy(values = values))) { open(player, region.id) }
+        gui.saveAndReopen(player, region.copy(mode = mode.copy(values = values))) { open(player, region.id, tab = tab) }
+    }
+
+    /** 三块标签的切换条；当前那块用不同材质标出来。 */
+    private fun renderTabs(player: Player, inventory: org.bukkit.inventory.Inventory, modeType: String, active: ModeTab) {
+        for (tab in ModeTab.entries) {
+            if (!ModeTabs.hasContent(modeType, tab)) continue
+            val material = if (tab == active) Material.LIME_STAINED_GLASS_PANE else Material.GRAY_STAINED_GLASS_PANE
+            inventory.setItem(tab.slot, text.item(player, material, tab.key))
+        }
     }
 
     /** 名单存的是 UUID，展示时换回名字——否则这一格就是一串没人看得懂的十六进制。 */
-    private fun judgeItem(values: Map<String, String>): ItemStack {
+    private fun judgeItem(viewer: Player, values: Map<String, String>): ItemStack {
         val judges = GuiValues.parseJudges(values)
         val names = judges.map { id ->
             Bukkit.getOfflinePlayer(id).name ?: id.toString()
         }
         return text.item(
+            viewer,
             Material.NAME_TAG,
             "gui.mode.judges",
-            mapOf("value" to names.joinToString(", ").ifBlank { text.text("gui.common.none") }),
+            mapOf("value" to names.joinToString(", ").ifBlank { text.text(viewer, "gui.common.none") }),
         )
     }
 

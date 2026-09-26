@@ -5,6 +5,7 @@ import org.bukkit.Location
 import org.bukkit.configuration.file.YamlConfiguration
 import org.bukkit.inventory.ItemStack
 import org.cubexmc.regions.RegionsPlugin
+import org.cubexmc.regions.match.GearSnapshot
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
@@ -49,6 +50,7 @@ class CombatGearStore(private val plugin: RegionsPlugin, fileName: String = "com
                     section.getDouble("exp", 0.0).toFloat(),
                     parseGameMode(section.getString("game-mode")),
                     parseLocation(section.getString("respawn")),
+                    section.getBoolean("confirmed", false),
                 )
             } catch (ex: RuntimeException) {
                 throw IllegalStateException(
@@ -60,7 +62,7 @@ class CombatGearStore(private val plugin: RegionsPlugin, fileName: String = "com
     }
 
     @Synchronized
-    fun put(playerId: UUID, regionId: String, snapshot: CombatModeService.GearSnapshot) {
+    fun put(playerId: UUID, regionId: String, snapshot: GearSnapshot) {
         val previous = entries.put(playerId, StoredGear(
             regionId,
             snapshot.contents,
@@ -70,6 +72,7 @@ class CombatGearStore(private val plugin: RegionsPlugin, fileName: String = "com
             snapshot.exp,
             snapshot.gameMode,
             snapshot.respawn,
+            confirmed = false,
         ))
         try {
             save()
@@ -82,6 +85,14 @@ class CombatGearStore(private val plugin: RegionsPlugin, fileName: String = "com
         }
     }
 
+    /**
+     * 读取但不删除。恢复流程先用它取快照、写回玩家背包，写入确认成功后才用 [take]
+     * 确认删除——这条顺序保证写背包失败时持久化记录还在，不会吞装备。
+     */
+    @Synchronized
+    fun peek(playerId: UUID): StoredGear? = entries[playerId]
+
+    /** [peek] 之后的确认删除：移除并落盘，落盘失败时把记录放回并抛出。 */
     @Synchronized
     fun take(playerId: UUID): StoredGear? {
         val removed = entries.remove(playerId)
@@ -97,6 +108,30 @@ class CombatGearStore(private val plugin: RegionsPlugin, fileName: String = "com
             }
         }
         return removed
+    }
+
+    /**
+     * 把 [peek] 出来的快照标记为"已经写回玩家背包"并**立即落盘**。
+     *
+     * 必须在 [take] 之前调用：只有确认先落了盘，宕机停在两步之间时才分得清
+     * "还没写回"（重放）与"写回过了"（只清理）。落盘失败时回滚内存标记并抛出，
+     * 调用方应保留 escrow 等下次恢复——重写同一份快照是幂等的。
+     */
+    @Synchronized
+    fun markConfirmed(playerId: UUID): Boolean {
+        val current = entries[playerId] ?: return false
+        if (current.confirmed) return true
+        entries[playerId] = current.copy(confirmed = true)
+        try {
+            save()
+        } catch (error: RuntimeException) {
+            entries[playerId] = current
+            throw error
+        } catch (error: java.io.IOException) {
+            entries[playerId] = current
+            throw error
+        }
+        return true
     }
 
     @Synchronized
@@ -115,6 +150,7 @@ class CombatGearStore(private val plugin: RegionsPlugin, fileName: String = "com
             yaml.set("$path.exp", stored.exp.toDouble())
             yaml.set("$path.game-mode", stored.gameMode.name)
             yaml.set("$path.respawn", formatLocation(stored.respawn))
+            yaml.set("$path.confirmed", stored.confirmed)
         }
         file.parentFile?.mkdirs()
         val temporary = File(file.parentFile, "${file.name}.tmp")
@@ -220,6 +256,15 @@ class CombatGearStore(private val plugin: RegionsPlugin, fileName: String = "com
         val exp: Float,
         val gameMode: GameMode,
         val respawn: Location?,
+        /**
+         * 这份快照是否**已经写回过**玩家背包。
+         *
+         * 恢复顺序是"写回 → 落盘确认 → 删记录"，所以宕机可能停在"已写回但记录还在"。
+         * 重启后看到 `confirmed = true` 只做清理，不再覆盖玩家此后拿到的新背包。
+         * 旧版本文件没有这个字段，读出来是 false —— 那是安全的一侧：最坏是把同一份
+         * 快照幂等地再写一次，而不是把装备吞掉。
+         */
+        val confirmed: Boolean = false,
     )
 
     private companion object {

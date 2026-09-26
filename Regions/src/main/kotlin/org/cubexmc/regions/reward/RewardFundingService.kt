@@ -40,12 +40,20 @@ class RewardFundingService(
 
         val lease = Lease(region.id, configured, UUID.randomUUID().toString(), LeaseState.PREPARING)
         store.put(lease)
-        if (!store.save()) return FundingResult.fail("LEASE_PERSISTENCE_FAILED")
+        if (!store.save()) {
+            // No provider call was made; do not leave an in-memory lease that abortStart could refund/lock.
+            store.remove(region.id)
+            return FundingResult.fail("LEASE_PERSISTENCE_FAILED")
+        }
 
         val locked = provider.lock(lease.operationId, configured, region.id)
         if (!locked.successful) {
-            store.remove(region.id)
-            store.save()
+            // A timeout or reflection failure can arrive after Contract persisted the lock.
+            // Keep this operation id until reconciliation can replay it and refund safely.
+            logger.warn(
+                "Funding lock was not confirmed for ${region.id} (${lease.operationId}): " +
+                    "${locked.code}; keeping the durable lease for reconciliation.",
+            )
             return locked
         }
         lease.state = LeaseState.LOCKED
@@ -54,13 +62,29 @@ class RewardFundingService(
     }
 
     @Synchronized
-    override fun settle(region: RegionDefinition, winnerCandidates: Set<UUID>): FundingResult {
+    override fun settle(region: RegionDefinition, winnerCandidates: Set<UUID>): FundingResult =
+        settleInternal(region, FundingSettlement(winnerCandidates))
+
+    /**
+     * 带锁定证据的结算（PLAN.md §7.2）：工会战的赢家是 Nation，收款人由开赛前锁定的
+     * `Nation ID → 合同签署方` 决定。比赛后成员退国、改名或换届都不改变收款人；
+     * 证据不足时保留 lease 进入待复核，不按当前成员关系猜测付款。
+     */
+    @Synchronized
+    override fun settle(region: RegionDefinition, evidence: FundingSettlement): FundingResult =
+        settleInternal(region, evidence)
+
+    private fun settleInternal(region: RegionDefinition, evidence: FundingSettlement): FundingResult {
         if (configuredContract(region) == null) return FundingResult.ok()
         val lease = store.get(region.id) ?: return FundingResult.fail("LEASE_MISSING", "No reward funding lease exists.")
         if (lease.state != LeaseState.SETTLING) {
             lease.state = LeaseState.SETTLING
             lease.winnerMode = region.mode?.type?.lowercase().orEmpty()
-            lease.winnerKeys = winnerCandidates.mapTo(LinkedHashSet(), UUID::toString)
+            lease.winnerKeys = evidence.winnerKeys.mapTo(LinkedHashSet(), UUID::toString)
+            if (evidence.unitParties.isNotEmpty()) {
+                lease.winnerUnit = evidence.winnerUnit
+                lease.unitParties = evidence.unitParties.mapValuesTo(LinkedHashMap()) { it.value.toString() }
+            }
             store.put(lease)
             if (!store.save()) return FundingResult.fail("LEASE_PERSISTENCE_FAILED")
         }
@@ -81,17 +105,14 @@ class RewardFundingService(
     override fun refund(region: RegionDefinition, reason: String): FundingResult {
         if (configuredContract(region) == null) return FundingResult.ok()
         val lease = store.get(region.id) ?: return FundingResult.ok()
-        return refundLease(lease, reason)
+        return if (lease.state == LeaseState.PREPARING) refundPreparingLease(lease, reason) else refundLease(lease, reason)
     }
 
     /** On startup/reload every unfinished match is aborted safely: terminal retries replay, locks refund. */
     @Synchronized
     override fun reconcile(): List<FundingResult> = store.all().map { lease ->
         when (lease.state) {
-            LeaseState.PREPARING -> {
-                val locked = provider.lock(lease.operationId, lease.contractId, lease.regionId)
-                if (!locked.successful) locked else refundLease(lease, "restart-recovery")
-            }
+            LeaseState.PREPARING -> refundPreparingLease(lease, "restart-recovery")
             LeaseState.LOCKED -> refundLease(lease, "restart-recovery")
             LeaseState.SETTLING -> {
                 val resolved = if (lease.winnerId != null) WinnerResolution(lease.winnerId, FundingResult.ok()) else resolveWinner(lease)
@@ -119,12 +140,32 @@ class RewardFundingService(
     }
 
     private fun resolveWinner(lease: Lease): WinnerResolution {
-        if (lease.winnerKeys.isEmpty()) {
+        if (lease.winnerKeys.isEmpty() && lease.unitParties.isEmpty()) {
             return WinnerResolution(null, FundingResult.fail("WINNER_NOT_FUNDED", "No winner evidence was recorded."))
         }
         val checked = provider.check(lease.contractId, lease.regionId)
         if (!checked.successful) return WinnerResolution(null, checked)
         val fundedParties = listOfNotNull(checked.partyA, checked.partyB)
+        // 开赛前锁定的 Nation → 签署方映射优先：赛后换国、改名、换届都不能改收款人。
+        if (lease.winnerMode == "union_war" && lease.unitParties.isNotEmpty()) {
+            val unit = lease.winnerUnit
+                ?: return WinnerResolution(
+                    null,
+                    FundingResult.fail("WINNER_NOT_FUNDED", "Nation settlement evidence has no winning nation recorded."),
+                )
+            val party = lease.unitParties[unit]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                ?: return WinnerResolution(
+                    null,
+                    FundingResult.fail("WINNER_NOT_FUNDED", "The winning nation does not map to exactly one WAGER party."),
+                )
+            if (fundedParties.isNotEmpty() && party !in fundedParties) {
+                return WinnerResolution(
+                    null,
+                    FundingResult.fail("WINNER_NOT_FUNDED", "The locked recipient is not a party of the current contract."),
+                )
+            }
+            return WinnerResolution(party, FundingResult.ok(lease.contractId))
+        }
         val matches = if (lease.winnerMode == "union_war") {
             val winningUnions = lease.winnerKeys
                 .mapNotNull { runCatching { UUID.fromString(it) }.getOrNull() }
@@ -143,6 +184,16 @@ class RewardFundingService(
     }
 
     private data class WinnerResolution(val winner: UUID?, val result: FundingResult)
+
+    private fun refundPreparingLease(lease: Lease, reason: String): FundingResult {
+        // The lock response may have been lost. A direct refund works even if replaying lock
+        // would now fail eligibility; if no lock exists, replay the original id before refunding.
+        val refunded = provider.refund(lease.operationId, lease.contractId, lease.regionId, reason)
+        if (refunded.successful) return finalize(lease, refunded)
+        if (refunded.code != "LOCK_CONFLICT") return refunded
+        val locked = provider.lock(lease.operationId, lease.contractId, lease.regionId)
+        return if (locked.successful) refundLease(lease, reason) else locked
+    }
 
     private fun refundLease(lease: Lease, reason: String): FundingResult {
         lease.state = LeaseState.REFUNDING

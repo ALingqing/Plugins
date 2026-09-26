@@ -9,14 +9,21 @@ import org.cubexmc.core.CubexCommandSuggestions
 import org.cubexmc.regions.RegionsPlugin
 import org.cubexmc.regions.capability.CapabilityKind
 import org.cubexmc.regions.capability.CapabilityRisk
+import org.cubexmc.regions.capability.ModeParameterSchema
+import org.cubexmc.regions.match.JoinResult
+import org.cubexmc.regions.match.SpectateResult
+import org.cubexmc.regions.mode.gameStatusLine
 import org.cubexmc.regions.model.EffectConfig
 import org.cubexmc.regions.model.EffectCombination
 import org.cubexmc.regions.model.EffectScope
 import org.cubexmc.regions.model.FlagConfig
 import org.cubexmc.regions.model.ModeConfig
 import org.cubexmc.regions.model.OwnerPolicy
+import org.cubexmc.regions.integration.UnionLookup
+import org.cubexmc.regions.service.RegionLookup
 import org.cubexmc.regions.model.RegionDefinition
 import org.cubexmc.regions.model.RegionSourceRef
+import org.cubexmc.regions.model.UnionRef
 import org.cubexmc.regions.model.ValidationIssue
 import org.cubexmc.regions.service.AuthorityDecision
 import java.time.Instant
@@ -25,14 +32,18 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
+    /** 待确认的强制结束：操作者+场地 → 首次执行时间。 */
+    private val forceEndConfirmations: MutableMap<String, Long> = java.util.concurrent.ConcurrentHashMap()
+
     override fun execute(commandSourceStack: CommandSourceStack, args: Array<String>) {
         execute(commandSourceStack.sender, args)
     }
 
     private fun execute(sender: CommandSender, args: Array<String>): Boolean {
         if (args.isEmpty()) {
-            if (sender is Player && canEnterManagementSilent(sender)) {
-                plugin.gui().openMain(sender)
+            // PLAN.md §5.1：/regions 对玩家打开活动大厅；管理入口是 /regions gui（大厅内有"我的场地"）。
+            if (sender is Player) {
+                plugin.gui().openLobby(sender)
                 return true
             }
             sendHelp(sender)
@@ -57,7 +68,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
             return true
         }
 
-        if (!canEnterManagementSilent(sender) && !args[0].equals("game", ignoreCase = true)) {
+        if (!canEnterManagementSilent(sender) && !args[0].equals("game", ignoreCase = true) && !args[0].equals("language", ignoreCase = true)) {
             plugin.lang().send(sender, "help-player")
             return true
         }
@@ -88,6 +99,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
             "inspect" -> inspect(sender, args)
             "cleanup" -> cleanup(sender, args)
             "doctor" -> doctor(sender)
+            "language" -> language(sender, args)
             else -> {
                 sendHelp(sender)
                 true
@@ -130,6 +142,18 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
             return true
         }
         if (args.size < 3) {
+            // M2.2：`/regions create` 无参数进入 4 阶段向导（自动 ID、玩法优先）；旧的手写 ID 语法保留。
+            if (sender is Player && args.size == 1) {
+                // 进行中的向导直接回到它所在的阶段（PLAN.md §5.2：关闭 GUI 后可继续）。
+                val wizard = plugin.gui().wizardDrafts.get(sender.uniqueId)
+                val draftId = wizard?.regionId
+                if (wizard != null && draftId != null && plugin.publishing().draft(draftId) != null) {
+                    plugin.gui().openWizardSettings(sender, draftId, backToMode = true)
+                } else {
+                    plugin.gui().creation.openModePicker(sender)
+                }
+                return true
+            }
             plugin.lang().send(sender, "invalid-usage", mapOf("usage" to "/regions create <id> <name>"))
             return true
         }
@@ -163,7 +187,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         ))
         val result = plugin.publishing().createDraft(sender, region)
         if (!result.success) {
-            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to result.reason))
+            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to plugin.lang().resultReason(result.code, result.args, result.reason)))
             return true
         }
         plugin.lang().sendPlain(sender, "command.region-created", mapOf("id" to id, "source" to source.describe()))
@@ -194,7 +218,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         if (!canManage(sender, region)) return true
         val result = plugin.publishing().saveDraft(sender, region.copy(enabled = enabled))
         if (!result.success) {
-            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to result.reason))
+            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to plugin.lang().resultReason(result.code, result.args, result.reason)))
             return true
         }
         plugin.audit().record(sender, region.id, if (enabled) "region.enable" else "region.disable")
@@ -234,7 +258,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         if (!allow(sender, plugin.authority().canCreate(sender, source))) return true
         val result = plugin.publishing().saveDraft(sender, withOwnerSnapshot(region.copy(source = source)))
         if (!result.success) {
-            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to result.reason))
+            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to plugin.lang().resultReason(result.code, result.args, result.reason)))
             return true
         }
         plugin.audit().record(sender, region.id, "region.bind", details = mapOf("source" to source.describe()))
@@ -261,7 +285,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         flags[key] = FlagConfig(key, args[4].lowercase(Locale.ROOT), parsePairs(args, 5))
         val result = plugin.publishing().saveDraft(sender, region.copy(flags = flags))
         if (!result.success) {
-            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to result.reason))
+            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to plugin.lang().resultReason(result.code, result.args, result.reason)))
             return true
         }
         plugin.audit().record(sender, region.id, "region.flag.set", details = mapOf("flag" to key, "value" to args[4]))
@@ -278,7 +302,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
             return true
         }
         if (args.size < 4 || !args[1].equals("set", ignoreCase = true)) {
-            plugin.lang().send(sender, "invalid-usage", mapOf("usage" to "/regions mode set <id> <free_event|dual_pvp|union_war|run_race|boat_race|horse_race|hide_and_seek> [key=value...]"))
+            plugin.lang().send(sender, "invalid-usage", mapOf("usage" to "/regions mode set <id> <${ModeParameterSchema.ALL_MODES.joinToString("|")}> [key=value...]"))
             return true
         }
         val region = plugin.publishing().editable(args[2])
@@ -290,7 +314,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         val type = args[3].lowercase(Locale.ROOT)
         val result = plugin.publishing().saveDraft(sender, region.copy(mode = ModeConfig(type, parsePairs(args, 4))))
         if (!result.success) {
-            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to result.reason))
+            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to plugin.lang().resultReason(result.code, result.args, result.reason)))
             return true
         }
         plugin.audit().record(sender, region.id, "region.mode.set", details = mapOf("mode" to type))
@@ -328,7 +352,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         effects.add(EffectConfig(args[3].lowercase(Locale.ROOT), scope, values, combination))
         val result = plugin.publishing().saveDraft(sender, region.copy(effects = effects))
         if (!result.success) {
-            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to result.reason))
+            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to plugin.lang().resultReason(result.code, result.args, result.reason)))
             return true
         }
         plugin.audit().record(sender, region.id, "region.effect.add", details = mapOf("effect" to args[3]))
@@ -347,7 +371,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         if (result.success) {
             plugin.lang().sendPlain(sender, "command.published", mapOf("id" to regionId))
         } else {
-            plugin.lang().sendPlain(sender, "command.publish-failed", mapOf("reason" to result.reason))
+            plugin.lang().sendPlain(sender, "command.publish-failed", mapOf("reason" to plugin.lang().resultReason(result.code, result.args, result.reason)))
         }
         return true
     }
@@ -373,7 +397,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
             val stopping = operation == "stop" || operation == "end"
             plugin.lang().sendPlain(player, if (stopping) "command.trial-stopped" else "command.trial-started")
         } else {
-            plugin.lang().sendPlain(player, "command.trial-failed", mapOf("reason" to result.reason))
+            plugin.lang().sendPlain(player, "command.trial-failed", mapOf("reason" to plugin.lang().resultReason(result.code, result.args, result.reason)))
         }
         return true
     }
@@ -410,7 +434,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
             plugin.lang().sendPlain(
                 sender,
                 if (it.available) "command.preview-dependency-ok" else "command.preview-dependency-missing",
-                mapOf("id" to it.id, "detail" to it.detail),
+                mapOf("id" to it.id, "detail" to plugin.lang().label("labels.dependency." + it.detail, it.detail)),
             )
         }
         val displayedMode = report.resolution.primaryModeRegion
@@ -456,7 +480,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         if (result.success) {
             plugin.lang().sendPlain(sender, "command.withdrawn", mapOf("id" to regionId))
         } else {
-            plugin.lang().sendPlain(sender, "command.withdraw-failed", mapOf("reason" to result.reason))
+            plugin.lang().sendPlain(sender, "command.withdraw-failed", mapOf("reason" to plugin.lang().resultReason(result.code, result.args, result.reason)))
         }
         return true
     }
@@ -499,7 +523,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         if (result.success) {
             plugin.lang().sendPlain(sender, "command.rolled-back", mapOf("id" to regionId, "revision" to revision.toString()))
         } else {
-            plugin.lang().sendPlain(sender, "command.rollback-failed", mapOf("reason" to result.reason))
+            plugin.lang().sendPlain(sender, "command.rollback-failed", mapOf("reason" to plugin.lang().resultReason(result.code, result.args, result.reason)))
         }
         return true
     }
@@ -515,7 +539,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         if (result.success) {
             plugin.lang().sendPlain(sender, "command.archived", mapOf("id" to regionId))
         } else {
-            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to result.reason))
+            plugin.lang().sendPlain(sender, "command.region-failed", mapOf("reason" to plugin.lang().resultReason(result.code, result.args, result.reason)))
         }
         return true
     }
@@ -528,7 +552,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         if (result.success) {
             plugin.lang().sendPlain(sender, "command.frozen", mapOf("id" to region.id))
         } else {
-            plugin.lang().sendPlain(sender, "command.freeze-failed", mapOf("reason" to result.reason))
+            plugin.lang().sendPlain(sender, "command.freeze-failed", mapOf("reason" to plugin.lang().resultReason(result.code, result.args, result.reason)))
         }
         return true
     }
@@ -541,7 +565,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         if (result.success) {
             plugin.lang().sendPlain(sender, "command.unfrozen", mapOf("id" to region.id))
         } else {
-            plugin.lang().sendPlain(sender, "command.freeze-failed", mapOf("reason" to result.reason))
+            plugin.lang().sendPlain(sender, "command.freeze-failed", mapOf("reason" to plugin.lang().resultReason(result.code, result.args, result.reason)))
         }
         return true
     }
@@ -566,7 +590,7 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
                     "region" to event.regionId,
                     "action" to event.action,
                     "actor" to event.actorName,
-                    "reason" to (event.reason?.let { " reason=$it" } ?: ""),
+                    "reason" to (event.reason?.let { " " + plugin.lang().label("labels.reason." + it, it) } ?: ""),
                 ),
             )
         }
@@ -584,21 +608,69 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         if (!has(sender, USE_PERMISSION)) {
             return true
         }
+        if (args.size < 2) {
+            plugin.lang().send(sender, "invalid-usage", mapOf("usage" to GAME_USAGE))
+            return true
+        }
+        // `<id>` 可省：第二个参数直接写动作时，用玩家当下的场地。
+        // 站在场上的人不应该还要背场地 ID，但旧的写法完全保留。
+        val omittedId = args[1].lowercase(Locale.ROOT) in GAME_ACTIONS
+        val args = if (omittedId) {
+            val current = currentGameRegionId(sender)
+            if (current == null) {
+                plugin.lang().send(sender, "game.region-required", mapOf("usage" to GAME_USAGE))
+                return true
+            }
+            arrayOf(args[0], current) + args.drop(1)
+        } else {
+            args
+        }
         if (args.size < 3) {
-            plugin.lang().send(sender, "invalid-usage", mapOf("usage" to "/regions game <id> <ready|start|status|end>"))
+            plugin.lang().send(sender, "invalid-usage", mapOf("usage" to GAME_USAGE))
             return true
         }
-        val region = plugin.regions().find(args[1])
-        if (region == null) {
-            plugin.lang().send(sender, "not-found", mapOf("id" to args[1]))
-            return true
-        }
+        val region = findRegion(sender, args[1]) ?: return true
         val isRace = plugin.raceModes().isRaceMode(region)
         val isRound = plugin.roundModes().isRoundMode(region)
+        val isCombat = plugin.combatModes().isCombatMode(region)
         val player = sender as? Player
         val action = args[2].lowercase(Locale.ROOT)
         when (action) {
+            "join" -> {
+                if (!has(sender, "regions.game.join")) return true
+                if (player == null) {
+                    plugin.lang().send(sender, "player-only")
+                    return true
+                }
+                val result = when {
+                    isCombat -> plugin.combatModes().join(player, region.id, args.getOrNull(3))
+                    isRace -> plugin.raceModes().join(player, region.id)
+                    isRound -> plugin.roundModes().join(player, region.id)
+                    else -> JoinResult.Rejected("game.match.join.not-a-match")
+                }
+                when (result) {
+                    is JoinResult.Joined -> Unit
+                    is JoinResult.TeamSelection -> sendTeamSelection(player, region, result.candidates)
+                    is JoinResult.Rejected -> plugin.lang().send(player, result.key, result.args)
+                }
+            }
+            "leave", "quit" -> {
+                if (player == null) {
+                    plugin.lang().send(sender, "player-only")
+                    return true
+                }
+                // 退出通道不设额外权限：失去参与权限的玩家也必须能退出并拿回装备。
+                val left = when {
+                    isRace -> plugin.raceModes().leave(player, region.id)
+                    isRound -> plugin.roundModes().leave(player, region.id)
+                    else -> plugin.combatModes().leave(player, region.id)
+                }
+                if (!left) {
+                    plugin.lang().sendPlain(player, "game.match.leave.not-joined", mapOf("id" to region.id))
+                }
+            }
             "ready" -> {
+                if (!has(sender, "regions.game.ready")) return true
                 if (player == null) {
                     plugin.lang().send(sender, "player-only")
                     return true
@@ -611,7 +683,111 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
                     plugin.combatModes().ready(player, args[1])
                 }
             }
+            "unready" -> {
+                if (!has(sender, "regions.game.ready")) return true
+                if (player == null) {
+                    plugin.lang().send(sender, "player-only")
+                    return true
+                }
+                val unreadied = when {
+                    isRace -> plugin.raceModes().unready(player, region.id)
+                    isRound -> plugin.roundModes().unready(player, region.id)
+                    isCombat -> plugin.combatModes().unready(player, region.id)
+                    else -> false
+                }
+                if (!unreadied) {
+                    plugin.lang().sendPlain(player, "game.match.unready.not-possible")
+                }
+            }
+            "spectate" -> {
+                if (!has(sender, "regions.game.spectate")) return true
+                if (player == null) {
+                    plugin.lang().send(sender, "player-only")
+                    return true
+                }
+                val result = when {
+                    isCombat -> plugin.combatModes().spectate(player, region.id)
+                    isRace -> plugin.raceModes().spectate(player, region.id)
+                    isRound -> plugin.roundModes().spectate(player, region.id)
+                    else -> SpectateResult.Rejected("game.match.spectate.not-a-match")
+                }
+                if (result is SpectateResult.Rejected) {
+                    plugin.lang().send(player, result.key, result.args)
+                }
+            }
+            "teams" -> {
+                if (!has(sender, "regions.game.start")) return true
+                if (!canManage(sender, region)) return true
+                val candidates = nationCandidates()
+                val mine = editUnionOf(sender)
+                // 只给一个参数 = "我方 vs 他"：甲方取发令者 `/l edit` 选定领地的国家。
+                val explicitFirst = args.getOrNull(3)
+                val explicitSecond = args.getOrNull(4)
+                val first = if (explicitSecond == null && explicitFirst != null && mine != null) mine.id else explicitFirst
+                val second = if (explicitSecond == null && explicitFirst != null && mine != null) explicitFirst else explicitSecond
+                if (first == null || second == null) {
+                    val (currentA, currentB) = plugin.combatModes().selectedTeams(region.id)
+                    plugin.lang().sendPlain(
+                        sender,
+                        "command.game-teams",
+                        mapOf(
+                            "id" to region.id,
+                            "a" to (currentA?.let { describeUnion(it, candidates) } ?: plugin.lang().message("gui.common.none")),
+                            "b" to (currentB?.let { describeUnion(it, candidates) } ?: plugin.lang().message("gui.common.none")),
+                        ),
+                    )
+                    // 把候选列成带编号的一份清单：服主可以直接 `teams 1 2`，不必拄 ULID。
+                    listUnionCandidates(sender, candidates, mine)
+                    return true
+                }
+                val resolvedA = resolveUnion(sender, first, candidates) ?: return true
+                val resolvedB = resolveUnion(sender, second, candidates) ?: return true
+                if (resolvedA.id == resolvedB.id) {
+                    plugin.lang().sendPlain(
+                        sender,
+                        "command.game-teams-same",
+                        mapOf("name" to UnionLookup.plainName(resolvedA.name)),
+                    )
+                    return true
+                }
+                val nameA = UnionLookup.plainName(resolvedA.name)
+                val nameB = UnionLookup.plainName(resolvedB.name)
+                if (!plugin.combatModes().selectTeams(region.id, resolvedA.id, resolvedB.id, nameA, nameB)) {
+                    plugin.lang().sendPlain(sender, "command.game-teams-failed", mapOf("id" to region.id))
+                    return true
+                }
+                plugin.audit().record(
+                    sender,
+                    region.id,
+                    "game.teams.selected",
+                    details = mapOf("a" to resolvedA.id, "b" to resolvedB.id),
+                )
+                plugin.lang().sendPlain(sender, "command.game-teams-set", mapOf("a" to nameA, "b" to nameB))
+            }
+            "result" -> {
+                if (!has(sender, "regions.game.view")) return true
+                // 八种玩法的结果写在同一个 store 里，所以这里不必再按玩法分派。
+                val result = plugin.matchStore().lastResult(region.id)
+                if (result == null) {
+                    plugin.lang().sendPlain(sender, "game.match.result.none", mapOf("id" to region.id))
+                    return true
+                }
+                plugin.lang().sendPlain(
+                    sender,
+                    "command.game-result",
+                    mapOf(
+                        "id" to region.id,
+                        "outcome" to plugin.lang().label("labels.outcome.${result.outcome.name.lowercase()}", result.outcome.name.lowercase()),
+                        "reason" to plugin.lang().label(result.reasonKey, result.reasonKey),
+                        "winner" to result.winnerIds
+                            .mapNotNull { plugin.server.getPlayer(it)?.name ?: it.toString() }
+                            .joinToString(", "),
+                        "reward" to plugin.lang().label("labels.reward.${result.rewardState.name.lowercase()}", result.rewardState.name.lowercase()),
+                    ),
+                )
+            }
             "start" -> {
+                if (!has(sender, "regions.game.start")) return true
                 if (!canManage(sender, region)) return true
                 val handled = if (isRace) {
                     plugin.raceModes().startCommand(sender, args[1])
@@ -621,29 +797,44 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
                     false
                 }
                 if (!handled) {
-                    plugin.lang().send(sender, "invalid-usage", mapOf("usage" to "/regions game <id> <ready|start|status|end>"))
+                    // 分清两种"开不了"：战斗三兄弟由全员准备自动开赛（没有发令这一步），
+                    // free_event 则根本不是比赛。回一条不相干的用法提示对谁都没帮助。
+                    val key = if (isCombat) "game.match.start.not-supported" else "game.match.join.not-a-match"
+                    plugin.lang().sendPlain(sender, key)
                 } else {
                     plugin.audit().record(sender, region.id, "game.start.requested", "manual-command")
                 }
             }
             "status" -> {
-                val state = when {
+                if (!has(sender, "regions.game.view")) return true
+                val status = when {
                     isRace -> plugin.raceModes().status(args[1])
                     isRound -> plugin.roundModes().status(args[1])
                     else -> plugin.combatModes().status(args[1])
                 }
-                plugin.lang().sendPlain(sender, "command.game-status", mapOf("id" to args[1], "state" to state))
+                plugin.lang().sendPlain(
+                    sender,
+                    "command.game-status",
+                    mapOf("id" to args[1], "state" to plugin.gameStatusLine(sender, status)),
+                )
             }
             "end", "stop" -> {
+                if (!has(sender, "regions.game.end")) return true
                 if (!canManage(sender, region)) return true
+                if (!has(sender, "regions.region.edit") && !isRace && !isRound) {
+                    return true
+                }
+                // PLAN.md §5.2：强制结束必须先说明影响再确认。命令语法不变（§5.4 定的是
+                // `/regions game <id> end`），改成"同一条命令在 30 秒内执行两次"才真的结束，
+                // 这样一次误触不会把正在打的比赛结算掉。
+                if (!confirmForceEnd(sender, region)) {
+                    return true
+                }
                 val ended = if (isRace) {
                     plugin.raceModes().forceEnd(sender, args[1], "manual-command")
                 } else if (isRound) {
                     plugin.roundModes().forceEnd(sender, args[1], "manual-command")
                 } else {
-                    if (!has(sender, "regions.region.edit")) {
-                        return true
-                    }
                     plugin.combatModes().forceEnd(args[1], "manual-command")
                 }
                 if (ended) {
@@ -653,9 +844,68 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
                     plugin.lang().sendPlain(sender, "command.game-not-running", mapOf("id" to args[1]))
                 }
             }
-            else -> plugin.lang().send(sender, "invalid-usage", mapOf("usage" to "/regions game <id> <ready|start|status|end>"))
+            else -> plugin.lang().send(sender, "invalid-usage", mapOf("usage" to GAME_USAGE))
         }
         return true
+    }
+
+/**
+     * 强制结束的两步确认（PLAN.md §5.2）。返回 true 表示本次可以真的结束。
+     *
+     * 第一次执行只打印"会发生什么"（场地、玩法、参赛人数、revision）并记下时间；
+     * 同一位操作者在 [_FORCE_END_CONFIRM_MILLIS] 内对同一场地再执行一次才放行。
+     * 只对**正在进行的比赛**要求确认——本来就没有比赛时直接走"没有进行中的游戏"分支。
+     */
+    private fun confirmForceEnd(sender: CommandSender, region: RegionDefinition): Boolean {
+        val status = forceEndStatus(region)
+        if (status == null) {
+            plugin.lang().sendPlain(sender, "command.game-not-running", mapOf("id" to region.id))
+            return false
+        }
+        val key = "${sender.name}:${region.id}"
+        val now = System.currentTimeMillis()
+        val previous = forceEndConfirmations[key]
+        if (previous != null && now - previous <= _FORCE_END_CONFIRM_MILLIS) {
+            forceEndConfirmations.remove(key)
+            return true
+        }
+        forceEndConfirmations[key] = now
+        // 顺手清掉过期条目，避免长期运行后积累。
+        forceEndConfirmations.entries.removeIf { now - it.value > _FORCE_END_CONFIRM_MILLIS }
+        plugin.lang().sendPlain(
+            sender,
+            "command.game-end-confirm",
+            mapOf(
+                "id" to region.id,
+                "mode" to plugin.lang().label("labels.mode." + (region.mode?.type ?: ""), region.mode?.type ?: "-"),
+                "participants" to status.toString(),
+                "revision" to region.publishedRevision.toString(),
+            ),
+        )
+        return false
+    }
+
+    /** 正在进行中的参赛人数；没有进行中的比赛返回 null。 */
+    private fun forceEndStatus(region: RegionDefinition): Int? {
+        val status = when {
+            plugin.raceModes().isRaceMode(region) -> plugin.raceModes().status(region.id)
+            plugin.roundModes().isRoundMode(region) -> plugin.roundModes().status(region.id)
+            plugin.combatModes().isCombatMode(region) -> plugin.combatModes().status(region.id)
+            else -> return null
+        }
+        return if (status.phase == org.cubexmc.regions.mode.GamePhase.RUNNING) status.players else null
+    }
+
+    /** 工会战选边失败时列出候选：玩家不需要记 Nation ID，直接用名字对应的稳定 ID 重试。 */
+    private fun sendTeamSelection(player: Player, region: RegionDefinition, candidates: List<UnionRef>) {
+        plugin.lang().send(player, "game.match.join.choose-nation", mapOf("name" to region.name))
+        for (candidate in candidates) {
+            plugin.lang().sendPlain(
+                player,
+                "game.match.join.choose-nation-line",
+                mapOf("name" to candidate.name, "id" to candidate.id, "command" to "/regions game ${region.id} join ${candidate.id}"),
+            )
+        }
     }
 
     private fun reload(sender: CommandSender): Boolean {
@@ -795,11 +1045,48 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
                 "validate-line",
                 mapOf(
                     "id" to issue.regionId,
-                    "severity" to issue.severity.name,
-                    "message" to issue.message,
+                    "severity" to plugin.lang().severityLabelFor(sender, issue.severity),
+                    "message" to plugin.lang().issueLineFor(sender, issue.code, issue.args, issue.fieldPath, issue.message),
                 ),
             )
         }
+    }
+
+    /**
+     * /regions language [zh_CN|en_US|auto]（PLAN.md §5.4）：只在 `locale-mode: player` 时生效；
+     * 选择存玩家 PDC，auto 清除后跟随客户端语言。
+     */
+    private fun language(sender: CommandSender, args: Array<String>): Boolean {
+        if (sender !is Player) {
+            plugin.lang().send(sender, "player-only")
+            return true
+        }
+        if (!has(sender, "regions.language.select")) return true
+        if (!(plugin.config.getString("locale-mode", "server") ?: "server").equals("player", ignoreCase = true)) {
+            plugin.lang().send(sender, "language-disabled")
+            return true
+        }
+        if (args.size < 2) {
+            val current = plugin.lang().playerSelectedLocale(sender) ?: "auto"
+            plugin.lang().send(sender, "language-current", mapOf("locale" to current))
+            return true
+        }
+        when (args[1].lowercase(Locale.ROOT)) {
+            "auto" -> {
+                plugin.lang().setPlayerLocale(sender, null)
+                plugin.lang().send(sender, "language-cleared")
+            }
+            "zh_cn" -> {
+                plugin.lang().setPlayerLocale(sender, "zh_CN")
+                plugin.lang().send(sender, "language-set", mapOf("locale" to "zh_CN"))
+            }
+            "en_us" -> {
+                plugin.lang().setPlayerLocale(sender, "en_US")
+                plugin.lang().send(sender, "language-set", mapOf("locale" to "en_US"))
+            }
+            else -> plugin.lang().send(sender, "invalid-usage", mapOf("usage" to "/regions language <zh_CN|en_US|auto>"))
+        }
+        return true
     }
 
     private fun sendHelp(sender: CommandSender) {
@@ -811,17 +1098,45 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         }
     }
 
+    /**
+     * 按用户的写法找场地：场地名、Lands 领地名、列表编号、唯一前缀或 Region ID。
+     *
+     * Region ID 仍然是内部主键，只是不再要求人背它（PLAN.md §5.4）。
+     * 同一块领地上可能叠着多个 Region（校验只禁止**有状态玩法**重叠），
+     * 所以命中多个时列出候选，不替用户选。
+     */
+    private fun findRegion(sender: CommandSender, input: String): RegionDefinition? {
+        // 先试精确 ID：旧行为一字不改（权限仍由后续的 canManage 判），
+        // 也避免可见性过滤把"没权限"变成误导人的"找不到"。
+        plugin.regions().find(input)?.let { return it }
+        val visible = plugin.authority().visibleRegions(sender, plugin.regions().all())
+        return when (val resolution = RegionLookup.resolve(input, visible)) {
+            is RegionLookup.Resolution.Found -> resolution.region
+            is RegionLookup.Resolution.Ambiguous -> {
+                plugin.lang().send(
+                    sender,
+                    "region-ambiguous",
+                    mapOf(
+                        "input" to input,
+                        "names" to resolution.matches.joinToString(", ") { RegionLookup.display(it) },
+                    ),
+                )
+                null
+            }
+
+            RegionLookup.Resolution.NotFound -> {
+                plugin.lang().send(sender, "not-found", mapOf("id" to input))
+                null
+            }
+        }
+    }
+
     private fun requireRegion(sender: CommandSender, args: Array<String>, usage: String): RegionDefinition? {
         if (args.size < 2) {
             plugin.lang().send(sender, "invalid-usage", mapOf("usage" to usage))
             return null
         }
-        val region = plugin.regions().find(args[1])
-        if (region == null) {
-            plugin.lang().send(sender, "not-found", mapOf("id" to args[1]))
-            return null
-        }
-        return region
+        return findRegion(sender, args[1])
     }
 
     private fun requireEditableRegion(sender: CommandSender, args: Array<String>, usage: String): RegionDefinition? {
@@ -896,7 +1211,12 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         if (!canManage && !args[0].equals("game", ignoreCase = true)) {
             return emptyList()
         }
-        if (args.size == 2 && listOf("validate", "remove", "enable", "disable", "bind", "trial", "preview", "publish", "withdraw", "unpublish", "history", "rollback", "archive", "freeze", "unfreeze", "audit", "game").contains(args[0].lowercase(Locale.ROOT))) {
+        if (args.size == 2 && args[0].equals("game", ignoreCase = true)) {
+            // 站在场地里时把动作词排在前面：那时 `<id>` 可以不写。
+            val actions = if (currentGameRegionId(sender) != null) GAME_ACTIONS.toList() else emptyList()
+            return startsWith(actions + visibleRegionIds(sender), args[1])
+        }
+        if (args.size == 2 && listOf("validate", "remove", "enable", "disable", "bind", "trial", "preview", "publish", "withdraw", "unpublish", "history", "rollback", "archive", "freeze", "unfreeze", "audit").contains(args[0].lowercase(Locale.ROOT))) {
             return startsWith(visibleRegionIds(sender), args[1])
         }
         if (args.size == 3 && args[0].equals("trial", ignoreCase = true)) {
@@ -914,8 +1234,25 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         if (args.size == 3 && (args[0].equals("mode", ignoreCase = true) || args[0].equals("flag", ignoreCase = true) || args[0].equals("effect", ignoreCase = true))) {
             return startsWith(visibleRegionIds(sender), args[2])
         }
-        if (args.size == 3 && args[0].equals("game", ignoreCase = true)) {
-            return startsWith(listOf("ready", "start", "status", "end", "stop"), args[2])
+        if (args.size == 2 && args[0].equals("language", ignoreCase = true)) {
+            return startsWith(listOf("zh_CN", "en_US", "auto"), args[1])
+        }
+        if (args.size == 3 && args[0].equals("game", ignoreCase = true) &&
+            args[1].lowercase(Locale.ROOT) !in GAME_ACTIONS
+        ) {
+            return startsWith(GAME_ACTIONS.toList(), args[2])
+        }
+        // 补全给**名字**而不是 ULID：26 位主键既读不出来也输不对，
+        // 解析侧仍然收 ULID，所以粘主键的旧习惯不会失效。
+        val teamsAt = when {
+            args[0].equals("game", ignoreCase = true) && args.getOrNull(2)?.equals("teams", true) == true -> 3
+            args[0].equals("game", ignoreCase = true) && args.getOrNull(1)?.equals("teams", true) == true -> 2
+            else -> -1
+        }
+        if (teamsAt > 0 && args.size in teamsAt + 1..teamsAt + 2) {
+            val names = UnionLookup.completions(nationCandidates())
+            val options = if (editUnionOf(sender) != null) listOf(SELF_UNION_TOKEN) + names else names
+            return startsWith(options, args[args.size - 1])
         }
         if (args.size == 3 && args[0].equals("bind", ignoreCase = true)) {
             return startsWith(listOf("cuboid", "lands"), args[2])
@@ -943,12 +1280,127 @@ class RegionsCommand(private val plugin: RegionsPlugin) : BasicCommand {
         return values.filter { it.lowercase(Locale.ROOT).startsWith(lower) }.sorted().take(20)
     }
 
+    /**
+     * 省略 `<id>` 时用哪个场地：先看玩家是不是已经在某场比赛里（参赛/观战/待恢复），
+     * 否则用脚下的场地。脚下同时压着多个场地时取优先级最高的那个（与进区检测同一排序）。
+     * 控制台没有位置，所以控制台必须显式写 ID。
+     */
+    private fun currentGameRegionId(sender: CommandSender): String? {
+        val player = sender as? Player ?: return null
+        plugin.combatModes().activeRegionId(player.uniqueId)?.let { return it }
+        return plugin.detection().regionsAt(player.location)
+            .firstOrNull { plugin.combatModes().isCombatMode(it) || plugin.raceModes().isRaceMode(it) || plugin.roundModes().isRoundMode(it) }
+            ?.id
+    }
+
+    /**
+     * 场地参数的补全：给**名字与领地名**，ID 不再刷屏。
+     * 解析侧仍然收 ID，脚本与审计里粘出来的主键照样能用。
+     */
     private fun visibleRegionIds(sender: CommandSender): List<String> =
-        plugin.authority().visibleRegions(sender, plugin.regions().all()).map { it.id }
+        RegionLookup.completions(plugin.authority().visibleRegions(sender, plugin.regions().all()))
+
+    /**
+     * 工会战选队的 Nation 补全。提供方识别不到就返回空列表——
+     * 补全宁可什么都不提示，也不能给出编造的 ID。
+     */
+    private fun nationCandidates(): List<UnionRef> =
+        plugin.unions().all()
+            .filter { it.isAvailable() && it.type != "fallback" }
+            .flatMap { it.allUnions() }
+            .distinctBy { it.id }
+
+    /**
+     * 把一行输入解析成工会：编号、名字（去色）、唯一前缀或 ULID 都行。
+     * 解析不出来就**把候选列出来**，而不是只回一句"失败"——
+     * 服主手里未必有 Lands 的 Nation 列表。
+     */
+    private fun resolveUnion(sender: CommandSender, input: String, candidates: List<UnionRef>): UnionRef? {
+        if (input.lowercase(java.util.Locale.ROOT) in SELF_UNION_ALIASES) {
+            val mine = editUnionOf(sender)
+            if (mine == null) {
+                plugin.lang().sendPlain(sender, "command.game-teams-no-edit-land", emptyMap())
+                return null
+            }
+            return mine
+        }
+        return resolveListed(sender, input, candidates)
+    }
+
+    /**
+     * 发令者"当下正在管的领地"所属的国家（Lands 的 `/l edit`）。
+     * 控制台没有领地，也就没有这个快捷方式。
+     */
+    private fun editUnionOf(sender: CommandSender): UnionRef? {
+        val player = sender as? Player ?: return null
+        return plugin.unions().active()?.getEditUnion(player.uniqueId)
+    }
+
+    private fun resolveListed(sender: CommandSender, input: String, candidates: List<UnionRef>): UnionRef? =
+        when (val resolution = UnionLookup.resolve(input, candidates)) {
+            is UnionLookup.Resolution.Found -> resolution.union
+            is UnionLookup.Resolution.Ambiguous -> {
+                plugin.lang().sendPlain(
+                    sender,
+                    "command.game-teams-ambiguous",
+                    mapOf(
+                        "input" to input,
+                        "names" to resolution.matches.joinToString(", ") { UnionLookup.plainName(it.name) },
+                    ),
+                )
+                null
+            }
+
+            UnionLookup.Resolution.NotFound -> {
+                plugin.lang().sendPlain(sender, "command.game-teams-unknown", mapOf("input" to input))
+                listUnionCandidates(sender, candidates, editUnionOf(sender))
+                null
+            }
+        }
+
+    private fun listUnionCandidates(sender: CommandSender, candidates: List<UnionRef>, mine: UnionRef? = null) {
+        val ordered = UnionLookup.ordered(candidates)
+        if (ordered.isEmpty()) {
+            plugin.lang().sendPlain(sender, "command.game-teams-none", emptyMap())
+            return
+        }
+        plugin.lang().sendPlain(sender, "command.game-teams-candidates", emptyMap())
+        ordered.forEachIndexed { index, union ->
+            plugin.lang().sendPlain(
+                sender,
+                if (union.id == mine?.id) "command.game-teams-candidate-mine" else "command.game-teams-candidate",
+                mapOf(
+                    "index" to (index + 1).toString(),
+                    "name" to UnionLookup.plainName(union.name),
+                    "id" to union.id,
+                ),
+            )
+        }
+    }
+
+    /** 已选定的工会尽量显示名字；列表里找不到（工会解散/改名）才退回 ULID。 */
+    private fun describeUnion(id: String, candidates: List<UnionRef>): String =
+        candidates.firstOrNull { it.id == id }?.let { UnionLookup.plainName(it.name) } ?: id
 
     companion object {
+        /** 选队时代表"我当下管的那个领地所属的国家"的写法。 */
+        const val SELF_UNION_TOKEN = "me"
+
+        private val SELF_UNION_ALIASES = setOf(SELF_UNION_TOKEN, "edit", "@me", "self")
+
         /** 玩家侧总开关:没有它就不能参与别人场地的活动。 */
         const val USE_PERMISSION = "regions.use"
+
+        /** 强制结束的二次确认窗口。 */
+        private const val _FORCE_END_CONFIRM_MILLIS = 30_000L
+
+        /** `/regions game` 的完整用法串；help 与拒绝提示共用，避免两处漂移。 */
+        const val GAME_USAGE = "/regions game [id] <join|leave|ready|unready|spectate|status|result|teams|start|end>"
+
+        /** 写在 `<id>` 位置上时表示"省略了场地"的动作词。 */
+        private val GAME_ACTIONS = setOf(
+            "join", "leave", "ready", "unready", "spectate", "status", "result", "teams", "start", "end", "stop",
+        )
 
         // 全服级操作的细粒度节点:发了其中一个就能只做那一件事,不必给整个 regions.superadmin。
         const val RELOAD_PERMISSION = "regions.reload"
@@ -970,4 +1422,4 @@ private val MANAGEMENT_ROOT_COMMANDS = listOf(
     "trial", "preview", "publish", "withdraw", "history", "rollback", "archive", "freeze",
     "unfreeze", "audit", "game", "reload", "validate", "inspect", "cleanup", "doctor", "help",
 )
-private val PLAYER_ROOT_COMMANDS = listOf("game", "help")
+private val PLAYER_ROOT_COMMANDS = listOf("game", "language", "help")

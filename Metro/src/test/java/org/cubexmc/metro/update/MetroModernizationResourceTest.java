@@ -21,6 +21,33 @@ import org.junit.jupiter.api.Test;
 class MetroModernizationResourceTest {
 
     @Test
+    void cruiseRemovalPreservesSpeedAndStallRecoverySettings() throws Exception {
+        YamlConfiguration yaml = yamlOf("""
+                config-version: 4
+                speed_control:
+                  mode: BLOCK_BASED
+                  cruise_control:
+                    enabled: true
+                    target_speed: 3.0
+                  block_speed_map:
+                    default:
+                      GOLD_BLOCK: 8
+                settings:
+                  cart_speed: 3.0
+                  safe_mode:
+                    movement_assist: true
+                """);
+        MetroRemoveCruiseControlStep step = new MetroRemoveCruiseControlStep();
+        step.migrate(new SimpleMigrationContext("config.yml", yaml));
+        step.migrate(new SimpleMigrationContext("config.yml", yaml));
+        assertFalse(yaml.contains("speed_control.cruise_control"));
+        assertEquals("BLOCK_BASED", yaml.getString("speed_control.mode"));
+        assertEquals(8, yaml.getInt("speed_control.block_speed_map.default.GOLD_BLOCK"));
+        assertEquals(3.0, yaml.getDouble("settings.cart_speed"));
+        assertTrue(yaml.getBoolean("settings.safe_mode.movement_assist"));
+        assertFalse(load("config.yml").contains("speed_control.cruise_control"));
+    }
+    @Test
     void bundledConfigUsesV2OnlyForDisplayWhitelist() {
         YamlConfiguration config = load("config.yml");
 
@@ -92,7 +119,50 @@ class MetroModernizationResourceTest {
         assertEquals(new MetroConfigModernizationStep(plugin).toVersion(),
                 new MetroMidRouteExitFareStep(plugin).fromVersion(),
                 "a version with no step leaves upgraded servers without the new keys");
-        assertEquals(MetroMigrations.CONFIG_VERSION, new MetroMidRouteExitFareStep(plugin).toVersion());
+        assertEquals(new MetroMidRouteExitFareStep(plugin).toVersion(),
+                new MetroEconomyAccountStep(plugin).fromVersion(),
+                "a version with no step leaves upgraded servers without the new keys");
+        assertEquals(new MetroEconomyAccountStep(plugin).toVersion(), new MetroRemoveCruiseControlStep().fromVersion());
+        assertEquals(MetroMigrations.CONFIG_VERSION, new MetroRemoveCruiseControlStep().toVersion());
+    }
+
+    @Test
+    void economyAccountStepAddsTheNewKeyToAV3ConfigWithoutChangingFares() throws Exception {
+        Metro plugin = pluginWithResource("config.yml", """
+                config-version: 4
+                economy:
+                  enabled: true
+                  account: ""
+                """);
+        YamlConfiguration yaml = yamlOf("""
+                config-version: 3
+                economy:
+                  enabled: true
+                """);
+
+        new MetroEconomyAccountStep(plugin).migrate(new SimpleMigrationContext("config.yml", yaml));
+
+        // Empty = the pre-v4 behaviour (fares from unowned lines are destroyed).
+        assertEquals("", yaml.getString("economy.account"));
+        assertTrue(yaml.getBoolean("economy.enabled"));
+    }
+
+    @Test
+    void economyAccountStepKeepsAnAccountTheOwnerAlreadyConfigured() throws Exception {
+        Metro plugin = pluginWithResource("config.yml", """
+                config-version: 4
+                economy:
+                  account: ""
+                """);
+        YamlConfiguration yaml = yamlOf("""
+                config-version: 3
+                economy:
+                  account: 'name:cubex_bank'
+                """);
+
+        new MetroEconomyAccountStep(plugin).migrate(new SimpleMigrationContext("config.yml", yaml));
+
+        assertEquals("name:cubex_bank", yaml.getString("economy.account"));
     }
 
     @Test
@@ -222,6 +292,24 @@ class MetroModernizationResourceTest {
         }
     }
 
+    @Test
+    void buildingLanguageMigrationPreservesCustomTextAndAddsFeedback() throws Exception {
+        Metro plugin = pluginWithResource("lang/en_US.yml", "stop:\n  create_ready: Ready\n");
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.set("stop.help_create", "Custom /m stop create \\<stop_id> \\<display_name>");
+        yaml.set("line.help_addstop", "Link \\<line_id> \\<stop_id>");
+        yaml.set("stop.title_types", "Custom: departure");
+        yaml.set("stop.create_success", "My custom success");
+        MetroBuildUxLanguageStep step = new MetroBuildUxLanguageStep(plugin);
+        SimpleMigrationContext context = new SimpleMigrationContext("lang/en_US.yml", yaml);
+        step.migrate(context);
+        step.migrate(context);
+        assertEquals("Custom /m stop create \\<stop_id> [display_name]", yaml.getString("stop.help_create"));
+        assertEquals("Link \\<line_id> [stop_id]", yaml.getString("line.help_addstop"));
+        assertEquals("Custom: departure, waiting", yaml.getString("stop.title_types"));
+        assertEquals("My custom success", yaml.getString("stop.create_success"));
+        assertEquals("Ready", yaml.getString("stop.create_ready"));
+    }
     private YamlConfiguration load(String resourcePath) {
         InputStream inputStream = getClass().getClassLoader().getResourceAsStream(resourcePath);
         assertTrue(inputStream != null, () -> "Missing resource: " + resourcePath);

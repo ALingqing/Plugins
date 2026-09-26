@@ -2,6 +2,24 @@
 
 ## 1.1.7 (unreleased)
 
+- **Reload safety**: `/rw reload` now runs as named stages. If line, stop or
+  portal changes cannot be written to disk first, the stages that re-read
+  `lines.yml` / `stops.yml` / `portals.yml` are skipped instead of replacing
+  those unsaved changes with the older file. A failing stage stops the reload,
+  and the reply and the console name the stage that failed.
+- **Saving**: a synchronous save that fails on every retry now leaves the store
+  marked as unsaved (it used to count as saved), so it is retried later.
+- **Language fallback**: a key missing from a server's language file now falls
+  back to the copy bundled in the jar, then down the locale chain
+  (`zh_CN` → `en_US`), instead of showing `Missing message: ...`.
+
+- **Fare destination**: fares from a line with **no owner** used to be withdrawn
+  and destroyed. The new `economy.account` names the server account they are
+  paid into instead (player UUID, `name:<account>`, a player name, or
+  `bank:<name>`), reusing the shared `cubex-economy` routing. Owned lines are
+  unchanged - they still pay their owner. Config migrates to v3 on first start
+  with the key empty, which is exactly the old behaviour.
+
 - **Spatial**: fix `Range3D.contains` half-open interval bug (mismatch with
   Bukkit `BoundingBox`); remove `Range3D` dependency from `Stop.java`
 - **Docs**: add JavaDoc to `Range3D`, `Point3D`, `Octree`; add `@since`

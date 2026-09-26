@@ -57,49 +57,18 @@ object BuiltInRegionCapabilities {
         ))
     }
 
+    /**
+     * 每种玩法只注册**它自己**读取的参数，且一律严格校验：写错或写到别的玩法上的键
+     * 会在校验阶段被点名，而不是通过校验后在运行时被静默忽略。
+     * 参数表在 [ModeParameterSchema]。
+     */
     private fun registerModes(catalog: CapabilityCatalog) {
-        val common = listOf(
-            integer("min-players", min = 1.0),
-            integer("max-players", min = 0.0),
-            integer("min-unions", min = 2.0),
-            bool("require-ready"),
-            bool("replace-gear"),
-            string("kit"), string("armor"), string("offhand"),
-            string("respawn"), string("outside"), string("spectator"),
-            enum("vehicle", VEHICLES),
-            enum("start-vehicle", VEHICLES),
-            enum("finish-vehicle", VEHICLES),
-            string("checkpoint-vehicles"),
-            string("start"), string("finish"), string("checkpoints"),
-            bool("require-start"), bool("teleport-start"),
-            enum("start-mode", setOf("vote", "judge")),
-            decimal("radius", min = 0.1),
-            decimal("start-radius", min = 0.1),
-            decimal("checkpoint-radius", min = 0.1),
-            decimal("finish-radius", min = 0.1),
-            decimal("vote-start-percent", min = 0.0, max = 1.0),
-            string("judges"),
-            integer("seekers", min = 1.0),
-            decimal("seeker-ratio", min = 0.05, max = 0.8),
-            integer("hide-seconds", min = 0.0),
-            integer("round-seconds", min = 0.0),
-            integer("timeout-seconds", min = 1.0),
-            integer("max-duration-seconds", min = 1.0),
-            integer("duration-seconds", min = 1.0),
-            bool("found-becomes-seeker"),
-            string("seeker-kit"), string("hider-kit"),
-            string("reward-source"), string("reward-contract"),
-        )
-        listOf(
-            "free_event",
-            "dual_pvp",
-            "union_war",
-            "run_race",
-            "boat_race",
-            "horse_race",
-            "hide_and_seek",
-        ).forEach { id ->
-            catalog.register(descriptor(CapabilityKind.MODE, id, parameters = common, strict = false))
+        for (id in ModeParameterSchema.ALL_MODES) {
+            catalog.register(descriptor(
+                CapabilityKind.MODE,
+                id,
+                parameters = ModeParameterSchema.parametersFor(id),
+            ))
         }
     }
 
@@ -167,13 +136,16 @@ object BuiltInRegionCapabilities {
     }
 
     private fun registerActions(catalog: CapabilityCatalog) {
-        catalog.register(descriptor(CapabilityKind.ACTION, "message", parameters = listOf(string("text", true, setOf("message")))))
-        catalog.register(descriptor(CapabilityKind.ACTION, "broadcast", parameters = listOf(string("text", true, setOf("message")))))
+        // text/title/subtitle 与对应 *-key 键形式互斥且至少其一，由 RegionValidationService 判定；
+        // schema 只声明接受的字段，required 让位给"二选一"规则。
+        catalog.register(descriptor(CapabilityKind.ACTION, "message", parameters = listOf(string("text", aliases = setOf("message")), string("text-key"))))
+        catalog.register(descriptor(CapabilityKind.ACTION, "broadcast", parameters = listOf(string("text", aliases = setOf("message")), string("text-key"))))
         catalog.register(descriptor(
             CapabilityKind.ACTION,
             "title",
             parameters = listOf(
                 string("title", allowBlank = true), string("subtitle", allowBlank = true),
+                string("title-key"), string("subtitle-key"),
                 integer("fade-in", min = 0.0), integer("stay", min = 0.0), integer("fade-out", min = 0.0),
             ),
         ))
@@ -262,10 +234,4 @@ object BuiltInRegionCapabilities {
         aliases: Set<String> = emptySet(),
     ) = ParameterDescriptor(key, ParameterType.ENUM, required, aliases, values)
 
-    private val VEHICLES = setOf(
-        "none", "on_foot", "on-foot", "no_vehicle", "no-vehicle", "foot",
-        "any", "vehicle", "any_vehicle", "any-vehicle", "boat", "horse", "minecart",
-        "pig", "strider", "camel", "donkey", "mule", "llama",
-        "pass", "ignore", "any_state", "any-state",
-    )
 }

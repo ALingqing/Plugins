@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Building workflow**: create complete stops from selection, standing powered rail and facing; optional names and contextual stop IDs for linking and editing, with overlap protection and language v4 migration.
+- **Station Titles**: honor arrival enablement and waiting timings/countdown; render custom MiniMessage templates; restore re-entry and cross-world displays; support multi-line templates and arrival/terminal actionbars; publish departure after clearing the waiting display.
+
+- **Experimental minecarts**: detect the world's Minecart Improvements flag without raising the Spigot 1.18.2 / Java 17 build baseline. Use native slope movement, brake before a fast cart crosses a narrow station, and correct powered-rail drift while docked. Paper 26.1.2 runtime results and remaining player/Folia checks are recorded in `docs/minecart-improvements.md`.
+- **Cruise control removed**: remove the ineffective velocity-based cruise task and its config/getters. Config v4 → v5 removes only `speed_control.cruise_control`, with the migration runner's automatic backup. Safe-mode stall recovery remains.
+
+- **Fare destination**: fares from a line with **no owner** used to be withdrawn
+  and destroyed. The new `economy.account` names the server account they are
+  paid into instead (player UUID, `name:<account>`, a player name, or
+  `bank:<name>`), reusing the shared `cubex-economy` routing. Owned lines are
+  unchanged - they still pay their owner. Config migrates to v4 on first start
+  with the key empty, which is exactly the old behaviour.
 - **Economy compatibility**: rebind the active Vault economy provider when
   services register/unregister and during `/m reload`, so late-loading or
   hot-reloaded currency providers remain usable.

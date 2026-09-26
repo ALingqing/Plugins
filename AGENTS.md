@@ -12,10 +12,12 @@ Minecraft 插件 monorepo（Gradle + `buildSrc` 约定插件）。产物是 **N 
 | 构建 / 跑测试 / 出 jar | [`README.md`](README.md) |
 | 整体架构设计 / 隔离原则 / 跨插件模型 | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
 | 共享模块使用指南 / API 示例 / 接入矩阵 | [`MODULES.md`](MODULES.md) |
-| 计划 / 待办 / 跨插件演进方向 | [`PLAN.md`](PLAN.md)（**全仓唯一计划文件**） |
+| 计划 / 待办 / 跨插件演进方向 | [`PLAN.md`](PLAN.md)（全仓总体计划；Regions 本轮实施例外见下文） |
 | Kotlin 编码规范与 Java 互操作避坑 | [`KOTLIN_STYLE_GUIDE.md`](KOTLIN_STYLE_GUIDE.md) |
 | 新增 / 修改命令、权限、help 与提示颜色 | [`COMMAND_PERMISSION_GUIDE.md`](COMMAND_PERMISSION_GUIDE.md) |
 | 写 / 改某个插件的 README | [`README_TEMPLATE.md`](README_TEMPLATE.md)（章节顺序固定；README 只写已实现的行为） |
+
+**Regions 计划例外（2026-09-07 用户明确要求）**：国际化、流程简化、Nation 工会战、双人 PVP 和单命大乱斗的具体实施任务写入 [`Regions/PLAN.md`](Regions/PLAN.md)。根 `PLAN.md` §5.2 保留索引与历史，不重复维护该轮任务；其余计划仍集中于根 `PLAN.md`。
 
 ## 常用命令
 

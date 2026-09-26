@@ -106,6 +106,7 @@ class TrainMovementTask @JvmOverloads constructor(
     }
 
     fun transferMinecart(newCart: Minecart) {
+        physicsController.resetExperimentalApproachBraking()
         val previousCart = session.minecart
         session.minecart = newCart
         session.isTeleporting = false
@@ -184,7 +185,10 @@ class TrainMovementTask @JvmOverloads constructor(
 
         travelDisplayController.onTrainMoved(session)
 
-        if (session.state != TrainState.MOVING_IN_STATION) {
+        val experimentalMovement = MinecartPhysicsCompatibility.usesExperimentalMovement(minecart.world)
+        val shouldBrake = session.state == TrainState.MOVING_IN_STATION ||
+            (experimentalMovement && session.state == TrainState.MOVING_BETWEEN_STATIONS)
+        if (session.isTeleporting || !shouldBrake) {
             return
         }
 
@@ -197,11 +201,18 @@ class TrainMovementTask @JvmOverloads constructor(
 
         val distance = currentLocation.distance(targetStopLocation)
         if (distance < 0.8) {
+            if (session.state == TrainState.MOVING_BETWEEN_STATIONS) {
+                transitionToMovingInStation(targetStop)
+            }
             transitionToStoppedAtStation(targetStop)
             return
         }
 
-        physicsController.applyApproachBraking(minecart, distance, session.plugin.configFacade.getCartSpeed())
+        if (experimentalMovement) {
+            physicsController.applyExperimentalApproachBraking(minecart, distance)
+        } else {
+            physicsController.applyApproachBraking(minecart, distance, session.plugin.configFacade.getCartSpeed())
+        }
     }
 
     private fun transitionToStoppedAtStation(stop: Stop) {
@@ -395,6 +406,7 @@ class TrainMovementTask @JvmOverloads constructor(
     }
 
     private fun handleDeparture() {
+        physicsController.resetExperimentalApproachBraking()
         val line = session.line
         if (line == null) {
             cancel()
@@ -420,7 +432,6 @@ class TrainMovementTask @JvmOverloads constructor(
 
         val minecart = session.minecart ?: return
         session.plugin.routeRecorder.sample(line.id, minecart, currentStop.stopPointLocation)
-        eventPublisher.publishDeparture(currentStop, nextStop)
 
         var maxSpeed = line.getMaxSpeed() ?: -1.0
         if (maxSpeed == -1.0) {
@@ -435,6 +446,7 @@ class TrainMovementTask @JvmOverloads constructor(
         }
 
         transitionToMovingBetweenStations()
+        eventPublisher.publishDeparture(currentStop, nextStop)
         movementAssistController.start()
     }
 

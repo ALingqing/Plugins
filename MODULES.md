@@ -18,7 +18,7 @@
 | [`cubex-command`](modules/cubex-command) | 动态指令：CommandMap 解析、动态指令注册与生命期注销 | **2/12** | FAWEReplacer, RuleGems |
 | [`cubex-gui`](modules/cubex-gui) | 界面交互：基于 Inventory 实例事件路由的 Menu 框架、ItemBuilder、Pagination、ChatInputState | **6/12** | Contract, Metro, Railway, EcoBalancer, Regions, RuleGems |
 | [`cubex-spatial`](modules/cubex-spatial) | 空间索引：Point3D, Range3D (AABB), Octree 八叉树索引 | **2/12** | Metro, Railway |
-| [`cubex-economy`](modules/cubex-economy) | Vault 经济封装 + `economy.account` 入账路由（内循环经济） | **2/12** | StateCharge, RuleGems |
+| [`cubex-economy`](modules/cubex-economy) | Vault 经济封装 + `economy.account` 入账路由（内循环经济） | **6/12** | StateCharge, RuleGems, MountLicense, Metro, Railway, EcoBalancer |
 
 ---
 
@@ -196,6 +196,21 @@ val component = i18n.component("menu.title")
 
 `I18nService.render(template, placeholders)` 渲染不对应固定 key 的动态模板；
 字符串、列表、标题及缺失前缀都使用同一语言回退链。旧式占位符适配保留在业务层。
+
+#### 按接收者语言渲染（显式 locale 重载）
+
+`message` / `messageList` / `component` / `componentList` / `send` 各有一个多一个 `locale` 参数的重载：
+
+```kotlin
+// 一条广播,每个接收者收到自己语言的版本
+for (player in participants) {
+    i18n.send(player, "game.start", localeOf(player), mapOf("venue" to venue))
+}
+```
+
+**广播请传 key + args,不要传渲染好的串**——预先渲染就把语言锁在发送方那一刻,
+后面再想按人分语言就得把整条链路拆回来(Regions 就这么返工过一次)。
+旧签名全部委派新实现，行为不变；`render` 是调用方自带模板，故与 locale 无关。
 
 ### 2.4 `cubex-scheduler`
 屏蔽 Paper、Spigot 与 Folia 底层多线程调度差异，提供统一生命期绑定的任务句柄。
@@ -379,6 +394,8 @@ CubeX 服务器的经济是内循环的：收费插件收走的钱要转进服�
 // 1. enable：hook Vault。返回 null 表示 Vault 或经济提供方缺席。
 economyService = VaultEconomy.hook(this, log())
     ?: abortEnable("Vault economy provider not found.")
+// 收费是可选玩法时别 abortEnable，改成降级：把字段留成可空、缺经济就不收费
+// （MountLicense 就是这么做的；按周期扣费的 StateCharge 才必须 abortEnable）。
 
 // 2. enable 与 reload 各解析一次 economy.account。名字解析可能触发一次
 //    阻塞的 profile 查询,**不能**放进每次扣款的路径里。
@@ -398,6 +415,19 @@ private fun applyEconomyAccount() {
 val result = economy().charge(player, cost)
 if (!result.success()) { /* 玩家付不起,回滚玩法侧 */ }
 ```
+
+#### 配置键不一定叫 `economy.account`
+
+已经发布的插件有自己的键名时，**不要为了对齐模块而改服主的配置**。
+EcoBalancer 保留 `tax-account`（开关）+ `tax-account-name`（账户名），
+在插件内部翻译成 `EconomyAccount.RawName` / `EconomyAccount.None` 再交给模块 ——
+模块要的是目标类型，不是某一行 YAML 的名字。
+
+#### 只接管一个分支也是合法用法
+
+Metro / Railway 的票款有两个去处：线路有 owner 就转给 owner（用 `withdraw` + `deposit`），
+没有 owner 才走 `charge()` 进 `economy.account`。**不要为了统一而把 owner 分支也改成 `charge()`** ——
+那会把玩家之间的收入分配改成服务器收入，是玩法变更，不是重构。
 
 #### 主动转账与消费扣费分开
 

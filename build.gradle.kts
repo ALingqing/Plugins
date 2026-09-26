@@ -91,6 +91,18 @@ tasks.register("createPlugin") {
         val projectDir = File(repoRoot, name)
         require(!projectDir.exists()) { "$name 目录已存在,先删掉或换个名字" }
 
+        // 先验证并生成所有内容。登记格式或命名空间有冲突时，不留下半个插件目录。
+        val settingsFile = File(repoRoot, "settings.gradle.kts")
+        val relocationsFile = File(repoRoot, "buildSrc/src/main/kotlin/CubexRelocations.kt")
+        val updatedSettings = CubexScaffold.withSettingsEntry(settingsFile.readText(), name)
+        val updatedRelocations = CubexScaffold.withRelocationEntry(
+            relocationsFile.readText(), name, CubexScaffold.pluginId(name),
+        )
+        val pluginBuildScript = CubexScaffold.buildScript(name, mode, modules)
+        val pluginYml = CubexScaffold.pluginYml(name, packageName, mode)
+        val mainSource = CubexScaffold.mainClassSource(name, packageName)
+        val smokeTest = CubexScaffold.smokeTestSource(name, packageName)
+
         val packagePath = packageName.replace('.', '/')
         File(projectDir, "src/main/kotlin/$packagePath").mkdirs()
         File(projectDir, "src/test/kotlin/$packagePath").mkdirs()
@@ -98,21 +110,16 @@ tasks.register("createPlugin") {
 
         // Kotlin 的 writeText 默认 UTF-8 无 BOM —— 别改成 PowerShell 写文件(会带 BOM,javac 直接炸)。
         File(projectDir, "build.gradle.kts")
-            .writeText(CubexScaffold.buildScript(name, mode, modules))
+            .writeText(pluginBuildScript)
         File(projectDir, "src/main/resources/plugin.yml")
-            .writeText(CubexScaffold.pluginYml(name, packageName, mode))
+            .writeText(pluginYml)
         File(projectDir, "src/main/kotlin/$packagePath/${name}Plugin.kt")
-            .writeText(CubexScaffold.mainClassSource(name, packageName))
+            .writeText(mainSource)
         File(projectDir, "src/test/kotlin/$packagePath/${name}PluginTest.kt")
-            .writeText(CubexScaffold.smokeTestSource(name, packageName))
+            .writeText(smokeTest)
 
-        val settingsFile = File(repoRoot, "settings.gradle.kts")
-        settingsFile.writeText(CubexScaffold.withSettingsEntry(settingsFile.readText(), name))
-
-        val relocationsFile = File(repoRoot, "buildSrc/src/main/kotlin/CubexRelocations.kt")
-        relocationsFile.writeText(
-            CubexScaffold.withRelocationEntry(relocationsFile.readText(), name, CubexScaffold.pluginId(name)),
-        )
+        settingsFile.writeText(updatedSettings)
+        relocationsFile.writeText(updatedRelocations)
 
         logger.lifecycle("")
         logger.lifecycle("[createPlugin] 已生成 $name($mode 模式, 模块: ${modules.joinToString(", ")})")
