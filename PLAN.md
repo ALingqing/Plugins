@@ -252,6 +252,15 @@ stdlib。我们的 `jarGate` 强制 `unrelocatedKotlin=0` 且测试随每次构�
         `PROVIDER_UNAVAILABLE`，停服前后 `PREPARING` lease 与 operation id 原样保留。
         双侧单测另覆盖落盘重启后的同 operation 重放、终态不重复付款、`REVIEW_REQUIRED`
         不转退款。
+      - [x] **2026-09-23 锁定回执不确定性加固**：Regions 在 lock 未确认时保留持久化
+        `PREPARING` lease；开赛中止及重启先用原 operation id 退款，无锁时同 ID 重放锁定再退款。
+        自动化覆盖已提交锁与未提交锁两端；联合 Paper 仅复验加载和无效 WAGER 连接。
+      - [x] **Contract 已落盘锁重放**：相同 operation id 与场地在 WAGER 后来完成或进入争议后仍返回
+        `REPLAYED`；不同 ID／场地拒绝，新的资格检查仍拒绝终态合同。持久化重启用例、Contract
+        全量测试与联合 Paper 加载通过，未据此勾选真人资金故障注入。
+      - [x] **Vault 失败回执的付款待办保全**：Contract 在入账调用返回失败后保留该笔 write-ahead
+        `DEPOSIT`，将 WAGER 标记争议并以 `REVIEW_REQUIRED` 阻止第二次付款。自动化覆盖首笔失败与
+        第二笔回执丢失的部分付款；真实 Vault 余额核对和人工处理仍待实服。
       - [ ] **仍需真人余额链路**：真实 WAGER 的 settle 中途关服、Vault provider 中途卸载、
         Contract 先卸载、人工处理 `REVIEW_REQUIRED`，并在 Paper 与 Folia 核对余额守恒。
 - ❌ ~~race / hide-and-seek / 赞助 / 多人分成的结果语义~~ —— 不是独立条目。

@@ -222,12 +222,20 @@ give @s diamond_pickaxe[minecraft:custom_data={PublicBukkitValues:{"leveltools:l
       `reward-funding.yml` 仍保留相同 state 与 operation id。
 - [x] 双侧自动化测试覆盖落盘重启后的同 operation 重放、已完成终态不重复执行，以及
       `REVIEW_REQUIRED` 保留 `SETTLING` 且不回退成 refund。
+- [x] Regions 回归测试覆盖 lock 回执丢失、开赛中止和 `PREPARING` 恢复：先以原 operation id
+      退款，确认无锁后才重放该 ID 再退款；[2026-09-23 隔离服记录](Regions/docs/r1-recovery-2026-09-23.md)
+      仅验证联合加载与无效 WAGER 的连接路径，不代表真实资金已验收。
+- [x] Contract 测试覆盖 WAGER 结算后从磁盘恢复旧锁重放、争议后重放，以及不同 ID／场地冲突；
+      最终 Contract JAR 在隔离 Paper 与 Regions 联合加载和 reload，见 [验证记录](Contract/docs/r1-lock-replay-2026-09-23.md)。
+- [x] Contract 真正的结算服务与持久化待办在模拟 Vault 失败回执下保留付款证据，标记争议并阻止同 ID
+      再付；覆盖首笔失败和第二笔已入账但回执失败，见 [故障测试记录](Contract/docs/r1-payout-uncertainty-2026-09-23.md)。
 
-本地可用 `./gradlew :Regions:runServer` 启动联合服；加
+Windows 本地可用 `.\gradlew.bat :Regions:runServer` 启动联合服；加
 `-PregionsRunWithContract=false` 会改用隔离的 `Regions/run-no-contract` 数据目录并省略 Contract。
 **每一条都要在结束后核对：`余额 + 托管 = 之前余额`。**
 
 - [ ] settle 执行到一半强制关服 → 重启后以**同一 operation id** 重放，不得二次付款。
+- [ ] lock 已落盘但回执丢失 → Regions 中止开赛后按**同一 operation id** 退款；锁未落盘时同 ID 重放再退款。
 - [ ] Vault provider 中途卸载 → Regions 侧应进入 `REVIEW_REQUIRED`，不得静默吞钱。
 - [ ] Contract 先于 Regions 卸载 → Regions 的 lease 应保留，重启后可重放。
 - [ ] 同一 operation id 重复提交 → 幂等，只生效一次。
