@@ -197,6 +197,21 @@ val component = i18n.component("menu.title")
 `I18nService.render(template, placeholders)` 渲染不对应固定 key 的动态模板；
 字符串、列表、标题及缺失前缀都使用同一语言回退链。旧式占位符适配保留在业务层。
 
+#### 按接收者语言渲染（显式 locale 重载）
+
+`message` / `messageList` / `component` / `componentList` / `send` 各有一个多一个 `locale` 参数的重载：
+
+```kotlin
+// 一条广播,每个接收者收到自己语言的版本
+for (player in participants) {
+    i18n.send(player, "game.start", localeOf(player), mapOf("venue" to venue))
+}
+```
+
+**广播请传 key + args,不要传渲染好的串**——预先渲染就把语言锁在发送方那一刻,
+后面再想按人分语言就得把整条链路拆回来(Regions 就这么返工过一次)。
+旧签名全部委派新实现，行为不变；`render` 是调用方自带模板，故与 locale 无关。
+
 ### 2.4 `cubex-scheduler`
 屏蔽 Paper、Spigot 与 Folia 底层多线程调度差异，提供统一生命期绑定的任务句柄。
 

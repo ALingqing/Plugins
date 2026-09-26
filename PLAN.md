@@ -60,8 +60,10 @@
 
 ### 2.3 `cubex-i18n` — 10/12
 
-`I18nService`：`raw`/`rawOrNull`/`rawList` · `message`(map/位置参数/指定 locale) · `messageList` ·
+`I18nService`：`raw`/`rawOrNull`/`rawList` · `message` · `messageList` ·
 `component`/`componentList`/`componentOf` · `send`；本身实现 `Reloadable`。
+**每一类都有显式 `locale` 重载**（2026-09 为 Regions 的按玩家语言补齐）：同一条广播可以
+逐接收者解析成各自的语言；旧签名全部委派新实现，行为不变。`render`（调用方自带模板）保持 locale 无关。
 `I18nOptions` 覆盖语言目录、locale（值或 `Supplier`）、fallback 链、bundled locales、
 `prefixKey`/`prefixToken`/`keyPrefix`、`MissingKeyMode`、`colorize`、`ColorMode`、`PlaceholderStyle`。
 `ColorMode` = `LEGACY_AND_HEX` / **`MINIMESSAGE`（已实现）**；
