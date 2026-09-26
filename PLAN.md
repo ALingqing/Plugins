@@ -1,11 +1,11 @@
 # CubeX-Plugins · 统一计划
 
-> **本文件是全仓唯一的计划/进度记录。** 2026-08-17 由 13 份分散的计划文件合并而来；
+> **本文件是全仓总体计划/进度记录。** 2026-08-17 由 13 份分散的计划文件合并而来；
 > 原始全文保留在 git 历史（合并前最后一次提交 `2783844`）。
 >
 > 分工：约定与硬约束看 [`AGENTS.md`](AGENTS.md)，构建看 [`README.md`](README.md)，
 > 架构看 [`ARCHITECTURE.md`](ARCHITECTURE.md)，共享模块用法看 [`MODULES.md`](MODULES.md)，
-> 发布记录看各插件 `CHANGELOG.md`。**新的待办只写进本文件**。
+> 发布记录看各插件 `CHANGELOG.md`。新的待办集中写进本文件；**2026-09-07 用户指定的 Regions 本轮实施计划例外**，见 [`Regions/PLAN.md`](Regions/PLAN.md)，本文件只保留入口，不重复维护具体任务。
 >
 > **本文下方提到的 `CUBEX_*_DESIGN.md` / `ARCHITECTURE_PROPOSAL.md` / `ROADMAP.md` /
 > `KOTLIN_MIGRATION_RUNBOOK.md` / 各插件 `IMPROVE_PLAN.md` 都已在 `484c1f6` 删除**，
@@ -427,6 +427,8 @@ GUI 有完整领取流程；`Asset` 的展示串重复问题也已修好。2026-
 
 ### 5.2 Regions（待首个正式 release）
 
+**本轮实施入口（2026-09-07）**：[Regions 使用体验、国际化与战斗玩法实施计划](Regions/PLAN.md)。按用户要求，以 Lands Nation 为工会战队伍，新增单命淘汰大乱斗，并完善双人 PVP；国际化、操作流程、语言迁移与运行恢复分为 M0–M7 实施。以下是历史基线与长期方向，本轮工作和验收以该文件为准，尚未实现。
+
 阶段 A（授权与能力真实性）、B（模板化创作与发布）、C（运行时完整度与组合规则）代码层已收口；
 Paper 1.21.11 build 132 启动/reload/关闭/端到端控制台流程已验证。
 
@@ -437,10 +439,12 @@ Paper 1.21.11 build 132 启动/reload/关闭/端到端控制台流程已验证�
       但备份、原子写、保存失败回滚与失败报告都交给 `cubex-config`。目前没有迁移步骤——
       首个公开版本就是起点；以后改格式只需版本号 +1 并在那里 `addStep(...)`。
       至此 Regions 与 Contract 的模块接入完全一致
-- [ ] 校验器与第三方依赖的错误正文仍是英文常量，未拆成翻译键（真人验证中收集到的难懂文案先统一调整）
+- [ ] 错误文案键化（**2026-09-09 核对源码后收窄**）：校验与发布诊断已改成稳定错误码 +
+      双语 `errors.*`（见 [`Regions/PLAN.md`](Regions/PLAN.md) M1.2）；**剩下**`ServiceResult.reason`、
+      资金类 `FundingResult.detail` 与审计行的英文诊断文本，以及 GUI 文案仍按服务器语言渲染
 - [ ] 子命令升级为强类型 Brigadier 节点（当前 Lifecycle Command API + 权限过滤 + 参数补全已够用）
-- [ ] 第一个公开版本发布后**冻结**数据基线（`config-version: 4`、`regions-version: 4`、
-      `templates-version: 1`、`lang-version: 4`、`escrow-version: 1`）；此后任何格式变化必须提供
+- [ ] 第一个公开版本发布后**冻结**数据基线（当前源码为 `config-version: 4`、`regions-version: 4`、
+      `templates-version: 2`、`lang-version: 7`、`escrow-version: 1`，正式基线随首发确认）；此后任何格式变化必须提供
       从公开版本起的单向迁移 + 自动化测试
 - [ ] **阶段 D — 自治活动与可信结算**：活动排期/报名/准备/开赛/结果/归档状态机；对接 Contract 托管
       支持赞助、对赌、退款、自动结算（**race/hide-and-seek/多人分成的结算语义在这里定，见 R1**）；
@@ -450,7 +454,7 @@ Paper 1.21.11 build 132 启动/reload/关闭/端到端控制台流程已验证�
       **新 Mode 和新 Source 不得抢在 A-C 之前扩张**
 - [ ] 候选：GUI 层切到 `cubex-gui`（原计划已建议复用 Contract 的 Menu/InventoryButton 风格，现已成模块）
 
-**明确不进入下个里程碑**：新增更多 Mode · 新 Source · 普通领主/非统治者管理 Region ·
+**明确不进入下个里程碑**：除本轮已授权 `free_for_all` 之外的更多 Mode · 新 Source · 普通领主/非统治者管理 Region ·
 协作者角色系统 · 模板市场与 Web 管理 · 脚本语言 · 普通统治者可发布的控制台或 OP 提权 action。
 
 **仍生效的关键设计决策（改代码前必读）**
